@@ -1,0 +1,8 @@
+[
+  {
+    "slug": "react-native-58965-destructuring",
+    "title": "Native destructuring on Hermes V1",
+    "description": "On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.",
+    "date": "2026-10-12"
+  }
+]

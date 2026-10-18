@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reports</title>
+<style>
+  :root { --bg: #fbfbfa; --fg: #16181c; --muted: #6b6f77; --rule: #dddcd6; --accent: #2a5fa8; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141517; --fg: #ecebe6; --muted: #9a9b97; --rule: #2e3034; --accent: #7fb0f0; color-scheme: dark; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 48px 20px 80px; }
+  h1 { font-size: 1.8rem; margin: 0 0 8px; }
+  .lede { color: var(--muted); margin: 0 0 32px; }
+  ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--rule); }
+  li { padding: 16px 0; border-bottom: 1px solid var(--rule); }
+  a { color: var(--accent); font-weight: 600; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .date { color: var(--muted); font-size: 0.85rem; margin-left: 12px; font-variant-numeric: tabular-nums; }
+  li p { margin: 4px 0 0; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Reports</h1>
+  <p class="lede">Benchmarks and investigations, mostly on React Native, Metro and Hermes.</p>
+  <ul>
+    <li><a href="react-native-58965-destructuring/">Native destructuring on Hermes V1</a><span class="date">2026-10-12</span><p>On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.</p></li>
+  </ul>
+</main>
+</body>
+</html>
