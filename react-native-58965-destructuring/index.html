@@ -204,6 +204,29 @@ pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: aut
       </ul>
     </div>
   </section>
+  <section>
+    <h2>Follow-up: -Xenable-fast-destructure</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Hermes has a hidden compiler flag, <code>-Xenable-fast-destructure</code> (also implied by <code>-Xenable-fast-noncompliant</code>), described as "UNSUPPORTED: Enable a faster, but non-compliant, array destructuring". It was not benchmarked on device: its effect is narrow enough to be read from the compiler, and it does not touch any of the tradeoffs above.</p>
+      <p><strong>What it changes.</strong> In native array destructuring, Hermes wraps each store to a target, and each default initialiser, in a try/catch that closes the iterator if that step throws, as the spec requires. The flag drops those wrappers. Stores to plain local bindings can't throw, so a pattern like <code>const [value, setValue] = useState()</code> never had one and compiles identically with or without the flag. Only array patterns with defaults (<code>[a = f()]</code>), nested patterns and member-expression targets (<code>[obj.a, b] = pair</code>) change.</p>
+      <p><strong>Expected speed.</strong> No measurable change. Hermes implements try/catch with exception tables, so a try region costs nothing while nothing throws; the flag removes bytecode and handler entries, not work on the normal path. The array-pattern regressions above come from walking the iterator protocol where Babel indexes directly, which the flag leaves as it is.</p>
+      <p><strong>Size.</strong> The bundles with native destructuring, compiled again with the flag by RN 0.88's <code>hermesc</code>:</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Bundle</th><th>Native destructuring</th><th>With the flag</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr><td>RN 0.88 template</td><td>963,768 B</td><td>963,660 B</td><td>−108 B (−0.01%)</td></tr>
+        <tr><td>RNTester (RN main)</td><td>1,762,956 B</td><td>1,762,804 B</td><td>−152 B (−0.01%)</td></tr>
+        <tr><td>Mattermost mobile</td><td>25,341,228 B</td><td>25,328,212 B</td><td>−13,016 B (−0.05%)</td></tr>
+        <tr><td>Bluesky social-app</td><td>31,022,724 B</td><td>31,017,572 B</td><td>−5,152 B (−0.02%)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>That recovers roughly a tenth of the 0.1–0.5% that native destructuring adds to bytecode.</p>
+      <p><strong>Compatibility.</strong> For arrays nothing observable changes, because array iterators have no <code>return()</code>. For generators and custom iterables it does: if a default initialiser or a target throws mid-pattern, <code>return()</code> is skipped, so a generator's <code>finally</code> cleanup does not run.</p>
+      <p><strong>Recommendation.</strong> Don't adopt it alongside this change. It would mean passing an unsupported, non-compliant flag in both the Xcode and Gradle bundling steps for a 0.01–0.05% bytecode saving and no expected runtime gain.</p>
+    </div>
+  </section>
 </main>
 <div class="tip" id="tip" hidden></div>
 
