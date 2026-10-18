@@ -1,5 +1,11 @@
 [
   {
+    "slug": "metro-1676-safety-review",
+    "title": "Dropping graceful-fs from Metro",
+    "description": "Safety review of react/metro#1676: what Metro loses without graceful-fs, checked against its source and stress-tested under a 256-fd hard limit.",
+    "date": "2026-10-18"
+  },
+  {
     "slug": "react-native-58965-destructuring",
     "title": "Native destructuring on Hermes V1",
     "description": "On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.",

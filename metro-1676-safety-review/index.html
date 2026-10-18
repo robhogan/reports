@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Dropping graceful-fs</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: single reading column (~72ch) with full-width data blocks that scroll inside their own frames. */
+:root {
+  --bg: #fbfbfa;
+  --surface: #f2f2ef;
+  --fg: #16181c;
+  --fg-2: #4d5159;
+  --fg-3: #7a7e86;
+  --rule: #dddcd6;
+  --accent: #2a5fa8;
+  --faster: #2a78d6;
+  --slower: #e34948;
+  --code-bg: #eeede8;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
+    --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
+  --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--font-body); }
+.page { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 80px; display: grid; gap: 56px; }
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; }
+section { display: grid; gap: 18px; min-width: 0; }
+.eyebrow { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
+.lede { font-size: 1.15rem; color: var(--fg-2); max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; overflow-wrap: anywhere; }
+a { color: var(--accent); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--fg-3); font-size: 0.9rem; }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.verdict > div { background: var(--bg); padding: 18px 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.verdict .k { font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--fg-3); }
+.verdict .v { font: 600 1.7rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+.verdict .d { color: var(--fg-2); font-size: 0.92rem; }
+.pos { color: var(--faster); }
+.neg { color: var(--slower); }
+ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+.tradeoffs { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+.tradeoff { display: grid; grid-template-columns: 7.5rem 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.tradeoff .sev { font: 500 0.72rem/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; padding-top: 3px; }
+.sev.high { color: var(--slower); }
+.sev.low { color: var(--fg-3); }
+.sev.med { color: var(--fg-2); }
+.tradeoff > div { min-width: 0; display: grid; gap: 6px; }
+.tradeoff .t { font-weight: 600; }
+.tradeoff .b { color: var(--fg-2); font-size: 0.95rem; }
+.scroll { overflow-x: auto; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font: 500 0.72rem/1.3 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-3); background: var(--surface); }
+th:first-child, td:first-child { text-align: left; }
+td:first-child { font-family: var(--font-mono); font-size: 0.82rem; white-space: normal; min-width: 14rem; }
+td.l, th.l { text-align: left; white-space: normal; min-width: 16rem; }
+tr.group td { background: var(--surface); font: 600 0.78rem/1.3 var(--font-body); color: var(--fg-2); }
+.note { color: var(--fg-2); font-size: 0.92rem; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+.grid2 > * { min-width: 0; }
+pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: auto; font: 0.82rem/1.5 var(--font-mono); }
+details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+details[open] summary { margin-bottom: 10px; }
+@media (max-width: 640px) {
+  .tradeoff { grid-template-columns: 1fr; gap: 4px; }
+}
+</style>
+</head>
+<body>
+<main class="page">
+  <header style="display:grid;gap:16px">
+    <div class="eyebrow">react/metro #1676 · safety review</div>
+    <h1>Dropping graceful-fs from Metro</h1>
+    <p class="lede">What <code>metro</code> and <code>metro-file-map</code> lose when <code>graceful-fs</code> is replaced with plain <code>node:fs</code>, checked against graceful-fs' source and measured under a 256-fd hard limit.</p>
+    <div class="meta">
+      <span>PR head <span class="mono">d5ca710</span> (main <span class="mono">5abdbc0</span> merged in)</span><span>graceful-fs 4.2.11</span><span>Node 26.11.1, macOS</span><span>Reviewed 2026-10-18</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v pos">Safe to land</span><span class="d">Only one graceful-fs feature ever reached Metro's calls: the retry queue for <code>EMFILE</code> (too many open files).</span></div>
+      <div><span class="k">Crawl 2.3M files</span><span class="v pos">0 errors</span><span class="d">Plain <code>fs</code>, hard limit of 256 fds, ~75k <code>readdir</code> calls pending at the peak. Same result as graceful-fs.</span></div>
+      <div><span class="k">Crawl with ≤2 fds free</span><span class="v neg">28 of 30,683</span><span class="d">The only way to make the crawler fail is a process already out of fds. Directories are then skipped with a warning.</span></div>
+      <div><span class="k">In production</span><span class="v pos">5 months</span><span class="d">Expo's <code>metro-file-map</code> fork dropped graceful-fs in SDK 56 and uses the Node crawler by default. No EMFILE crawl reports since.</span></div>
+    </div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>graceful-fs was added to Metro's predecessor in 2015 because the packager "uses as much concurrency as possible" and kept running out of file descriptors under a low <code>ulimit</code>. Metro no longer works that way. The crawler's <code>readdir</code> and <code>lstat</code> don't keep any file open between calls, so the crawler never has more than <code>UV_THREADPOOL_SIZE</code> (default 4) fds open at once, however large the tree. Every other graceful-fs feature (the Windows <code>rename</code> retry, the <code>chmod</code>/<code>chown</code> fixes, the polyfills) patches calls Metro never makes.</p>
+      <p>Two edge cases remain, both in processes that are already almost out of file descriptors. In that state a crawl now skips directories instead of retrying, and a source request returns 500 instead of waiting. Neither is plausible at normal limits. The server case is also failing either way, because each connection uses an fd too.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What graceful-fs did, call site by call site</h2>
+    <div class="prose"><p>graceful-fs exports a patched copy of <code>fs</code>. On first load it also wraps the global <code>fs.close</code> and <code>closeSync</code>, so that any close in the process retries queued operations. Metro imported it in exactly three places.</p></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Call site</th><th class="l">fs calls</th><th class="l">What graceful-fs added</th><th class="l">Replacement</th></tr></thead>
+      <tbody>
+        <tr><td>metro-file-map crawlers/node</td><td class="l"><code>readdir</code> (async), <code>lstat</code> (async)</td><td class="l">EMFILE/ENFILE queue and retry for <code>readdir</code>, up to 60 s. <code>lstat</code> is never queued.</td><td class="l">None needed. A retry is an optional follow-up, see below.</td></tr>
+        <tr><td>metro-file-map worker.js</td><td class="l"><code>readFileSync</code></td><td class="l">Nothing. graceful-fs doesn't patch sync calls (only <code>readSync</code> EAGAIN, which <code>readFileSync</code> doesn't route through the patched copy).</td><td class="l">None</td></tr>
+        <tr><td>metro Server.js</td><td class="l"><code>createReadStream</code> (source requests), <code>readFileSync</code> (symbolication)</td><td class="l">EMFILE queue on the stream's <code>open</code>. Nothing for <code>readFileSync</code>.</td><td class="l">None. Sockets run out first, see the stress test.</td></tr>
+      </tbody>
+    </table></div>
+    <div class="scroll"><table>
+      <thead><tr><th>graceful-fs feature</th><th class="l">Applies to</th><th class="l">Used by Metro?</th></tr></thead>
+      <tbody>
+        <tr><td>EMFILE/ENFILE queue and retry</td><td class="l"><code>open</code>, <code>readdir</code>, <code>readFile</code>, <code>writeFile</code>, <code>appendFile</code>, <code>copyFile</code>, streams</td><td class="l">Yes: crawler <code>readdir</code>, Server <code>createReadStream</code></td></tr>
+        <tr><td>win32 rename retry</td><td class="l"><code>rename</code> on EACCES/EPERM/EBUSY, only while the target doesn't exist</td><td class="l">No. Metro has no <code>rename</code> in its source.</td></tr>
+        <tr><td>chown/chmod error filters</td><td class="l">Ignores EPERM/EINVAL for non-root users</td><td class="l">No</td></tr>
+        <tr><td>lchmod / lutimes polyfills</td><td class="l">Platforms that lack them</td><td class="l">No</td></tr>
+        <tr><td>stat uid/gid fix</td><td class="l">Negative uid/gid made unsigned</td><td class="l">No. The crawler reads <code>mtime</code> and <code>size</code> only.</td></tr>
+        <tr><td>read EAGAIN retry</td><td class="l"><code>read</code>, <code>readSync</code></td><td class="l">No</td></tr>
+        <tr><td><code>gracefulify</code></td><td class="l">Patches the global <code>fs</code></td><td class="l">Never called by Metro</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">The <code>rename</code> retry gives up as soon as <code>stat(target)</code> succeeds. So it wouldn't help with concurrent writers racing to rename onto the same cache key either (react/metro#2040's Windows <code>EPERM</code>). That needs its own handling.</p>
+  </section>
+
+  <section>
+    <h2>Why the crawler can't run out of file descriptors</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>The Node crawler recurses with no concurrency limit of its own: every directory it sees issues a <code>readdir</code> straight away, and every matching file an <code>lstat</code>. A crawl of 2.3M files had about 75,000 <code>readdir</code> calls pending at its peak. None of them holds an fd while it waits. On macOS and Linux, libuv runs each <code>readdir</code> as one <code>scandir(3)</code> on a threadpool thread, which opens, reads and closes the directory in one job. On Windows it uses <code>CreateFileW</code> and <code>NtQueryDirectoryFile</code> on a handle and never allocates a C runtime fd. <code>lstat</code> needs no fd at all. Open fds are therefore bounded by the threadpool size (4 unless <code>UV_THREADPOOL_SIZE</code> is set), not by the size of the tree.</p>
+      <p>The 2015 failure mode also needs a low <em>hard</em> limit. Node raises its soft <code>RLIMIT_NOFILE</code> to the hard limit at startup, so <code>ulimit -n 256</code> on its own has no effect: the test process still opened 92,149 fds (macOS's <code>kern.maxfilesperproc</code>). Everything below was run with <code>ulimit -Sn 256; ulimit -Hn 256</code>.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Stress tests</h2>
+    <div class="prose"><p>These are standalone copies of the two code paths, not the PR's code, each run with plain <code>node:fs</code> and with graceful-fs 4.2.11 swapped in. The crawler copy is main's <code>find</code> function from <code>crawlers/node</code>. The server copy is <code>_processSourceRequest</code>'s <code>createReadStream(file).pipe(res)</code>, with a 500 on error.</p></div>
+    <div style="display:grid;gap:10px">
+      <h3>Crawler</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Scenario</th><th>Files found, fs</th><th>EMFILE, fs</th><th>Files found, graceful-fs</th><th>EMFILE, graceful-fs</th></tr></thead>
+        <tbody>
+          <tr><td>2,302,951-file tree, all fds free</td><td>2,302,951</td><td>0</td><td>2,302,951</td><td>0</td></tr>
+          <tr><td>30,683-file tree, 2 fds free</td><td class="neg">28</td><td class="neg">14</td><td>30,683</td><td>0</td></tr>
+          <tr><td>30,683-file tree, 1 fd free</td><td class="neg">28</td><td class="neg">14</td><td>30,683</td><td>0</td></tr>
+          <tr><td>30,683-file tree, 64 free, <code>UV_THREADPOOL_SIZE=128</code></td><td class="neg">26,668</td><td class="neg">56</td><td>30,683</td><td>0</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note prose">Wall time for the full crawl: 56.8 s with <code>fs</code>, 59.0 s with graceful-fs. In the 1–2-free cases graceful-fs completes in about 2.4 s against 0.2 s for a normal crawl, because it waits for its retry timer. Nothing in the crawler closes an fd that would wake the queue sooner. The "fds free" cases were set up by opening files until <code>EMFILE</code>, then closing N of them.</p>
+    </div>
+    <div style="display:grid;gap:10px">
+      <h3>Source requests</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Concurrent connections</th><th>fs: 200</th><th>fs: 500</th><th>fs: reset</th><th>graceful-fs: 200</th><th>graceful-fs: 500</th><th>graceful-fs: reset</th></tr></thead>
+        <tbody>
+          <tr><td>50</td><td>3,000</td><td>0</td><td>0</td><td>3,000</td><td>0</td><td>0</td></tr>
+          <tr><td>110</td><td>3,000</td><td>0</td><td>0</td><td>3,000</td><td>0</td><td>0</td></tr>
+          <tr><td>200</td><td>75</td><td class="neg">2,177</td><td class="neg">748</td><td>734</td><td>0</td><td class="neg">2,266</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note prose">3,000 requests per run. Each response is held for 30 ms so that requests overlap, and the client runs in a separate process. Every connection uses an fd for its socket as well as one for the file. So at the point where <code>open</code> fails, <code>accept</code> is failing too, and graceful-fs mostly turns 500s into connection resets. Browsers open at most 6 HTTP/1.1 connections per host, so source requests from DevTools come nowhere near this.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where removal is a tradeoff</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev med">Edge case</span><div><span class="t">A crawl in a process that is out of file descriptors skips directories</span><span class="b">The crawler treats every <code>readdir</code> error as "warn and skip", so with plain <code>fs</code> an <code>EMFILE</code> drops that whole subtree from the file map for the session. The next start crawls again and heals it. This needs fewer free fds than threadpool threads, which none of the realistic runs came close to. Optional follow-up: retry <code>readdir</code> on <code>EMFILE</code>/<code>ENFILE</code> with a short backoff (about 10 lines). A concurrency limit won't help, because fd use is already bounded.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Negligible</span><div><span class="t">Source requests at the fd limit return 500 instead of waiting</span><span class="b">This only happens in the band where sockets still fit but files don't, which needs well over 100 concurrent connections at a 256 hard limit. Not something any client of Metro's dev server does.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Neutral</span><div><span class="t">Hosts that patch fs globally</span><span class="b">Nothing in Metro depends on graceful-fs having patched the global <code>fs</code>. The retry queue is shared through a global symbol, so other copies of graceful-fs in the process keep working. React Native Community CLI 20.2 calls <code>gracefulify(fs)</code>, but only in its <code>rnc-cli</code> binary. <code>react-native start</code> loads the CLI through <code>react-native/cli.js</code> and never runs it. Where it does run, it patches <code>fs</code> before Metro loads, and Metro's default import (<code>import fs from 'node:fs'</code>) sees the patched functions.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Small gain</span><div><span class="t">Footprint</span><span class="b">graceful-fs stays installed through <code>jest-worker</code> → <code>jest-util</code> (and the Community CLI), so install size is unchanged and so is <code>yarn.lock</code>. A Metro process no longer loads it, though: <code>jest-util</code> requires it lazily and the worker children only use <code>isPromise</code>. That saves 2.5–4.5 ms of startup and the global <code>fs.close</code> wrap.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Evidence from downstream and history</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>Expo has shipped this already.</strong> <code>@expo/metro-file-map</code> removed graceful-fs in expo/expo#45378 (SDK 56, May 2026) and made the Node crawler, with plain <code>fs</code> and the same unbounded <code>readdir</code>/<code>lstat</code> structure, the default instead of Watchman.</li>
+        <li><strong>No EMFILE crawl or source-request reports</strong> in react/metro or expo/expo. The EMFILE issues that do exist (react/metro#1405, expo/expo#29083, and the Windows note in expo/expo#47662) are <code>fs.watch</code> running out of handles, which graceful-fs never covered.</li>
+        <li><strong>Higher-volume <code>fs</code> users never had it.</strong> <code>metro-cache</code>'s <code>FileStore</code> reads and writes every transform result with plain <code>fs</code>.</li>
+        <li><strong>The original reason no longer applies.</strong> The 2015 commit's test plan was <code>ulimit -n 256</code> against a packager that opened files with unbounded concurrency. Node now raises that soft limit by itself, and the crawler no longer holds files open.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>The merge</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>The PR was six months behind main and conflicted with three crawler and test changes (#1677, #1693, #1937). Merge commit <span class="mono">d5ca710</span> brings it up to main <span class="mono">5abdbc0</span> and makes three changes beyond resolving those conflicts:</p>
+      <ul class="tight">
+        <li><code>node:fs</code> everywhere, as in the rest of Metro and as main's lint rule <code>import/enforce-node-protocol-usage</code> requires. The crawler and <code>Server.js</code> use the default import.</li>
+        <li>The test mocks in <code>worker-test</code>, <code>FileProcessor-test</code> and <code>node-test</code> move to <code>node:fs</code>. The <code>worker-test</code> and <code>FileProcessor-test</code> mocks of <code>fs</code> only reached <code>worker.js</code> because graceful-fs requires <code>fs</code> internally.</li>
+        <li><code>resolver-test</code>'s <code>graceful-fs</code> mock is removed. That test already mocks <code>node:fs</code>, so the plain <code>'fs'</code> import of the original PR breaks it (192 failures).</li>
+      </ul>
+      <p>Verified at <span class="mono">d5ca710</span>: full Jest suite (158 suites, 2,982 passed, 1 skipped), Flow, ESLint and Prettier on the changed files, <code>verify-api-snapshots</code>, and the build. <code>yarn.lock</code> is unchanged and <code>--frozen-lockfile</code> passes.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li>Land #1676 at <span class="mono">d5ca710</span> once CI is green.</li>
+        <li>Optional follow-up: retry the crawler's <code>readdir</code> on <code>EMFILE</code>/<code>ENFILE</code> with a capped backoff, rather than skipping the directory. It's cheap insurance against a silently incomplete file map.</li>
+        <li>Don't bring graceful-fs back for <code>FileStore</code>'s atomic writes (#2040). Its <code>rename</code> retry gives up once the target exists, which is exactly the case there.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>The graceful-fs behavior table comes from reading 4.2.11's <code>graceful-fs.js</code> and <code>polyfills.js</code>, the version <code>yarn.lock</code> resolves for <code>^4.2.4</code>. The libuv claims come from <code>src/unix/fs.c</code> and <code>src/win/fs.c</code>, and the Node soft-limit behavior from <code>PlatformInit</code> in <code>src/node.cc</code>, confirmed by opening files until <code>EMFILE</code>. The 2.3M-file tree is a directory of about 75 repository checkouts, mostly JavaScript, many with <code>node_modules</code> installed. The 30,683-file tree is one Metro checkout. Windows wasn't stress-tested: there <code>readdir</code> uses no C runtime fd, and the PR's CI was green on Windows before the merge.</p>
+    </div>
+    <details class="prose">
+      <summary>Crawler stress script</summary>
+<pre>// Standalone copy of metro-file-map's Node crawler `find` on main (5abdbc0):
+// unbounded recursive readdir({withFileTypes}) + lstat per matching file.
+// Usage: node crawl.js &lt;fs|graceful&gt; &lt;root&gt; [reserveFds]
+'use strict';
+const path = require('node:path');
+const [, , which, root, reserve = '0'] = process.argv;
+const fs = which === 'graceful' ? require('graceful-fs') : require('node:fs');
+const exts = new Set(['js', 'jsx', 'ts', 'tsx', 'json', 'mjs', 'cjs', 'png', 'md', 'flow', 'map']);
+
+// Optionally consume fds up to (limit - reserve) to simulate a process already near its limit.
+const held = [];
+if (+reserve &gt; 0) {
+  for (;;) {
+    try { held.push(fs.openSync(__filename, 'r')); } catch (e) { if (e.code !== 'EMFILE') throw e; break; }
+  }
+  for (let i = 0; i &lt; +reserve &amp;&amp; held.length; i++) fs.closeSync(held.pop());
+}
+
+const errors = {};
+let files = 0;
+new Promise(resolve =&gt; {
+  let activeCalls = 0;
+  const done = () =&gt; { if (activeCalls === 0) resolve(); };
+  function search(dir) {
+    activeCalls++;
+    fs.readdir(dir, {withFileTypes: true}, (err, entries) =&gt; {
+      activeCalls--;
+      if (err) errors['readdir:' + err.code] = (errors['readdir:' + err.code] || 0) + 1;
+      else for (const e of entries) {
+        const file = dir + path.sep + e.name;
+        if (e.isDirectory()) { search(file); continue; }
+        if (!exts.has(path.extname(e.name).slice(1)) &amp;&amp; !e.isSymbolicLink()) continue;
+        activeCalls++;
+        fs.lstat(file, (err, st) =&gt; {
+          activeCalls--;
+          if (err) errors['lstat:' + err.code] = (errors['lstat:' + err.code] || 0) + 1;
+          else files++;
+          done();
+        });
+      }
+      done();
+    });
+  }
+  search(root);
+}).then(() =&gt; console.log(JSON.stringify({which, files, errors})));</pre>
+    </details>
+  </section>
+</main>
+</body>
+</html>
