@@ -135,7 +135,7 @@ pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: aut
     </div>
   </section>
 
-  <section>
+  <section id="tradeoffs">
     <h2>Where removing the transform is a tradeoff</h2>
     <div class="tradeoffs">
       <div class="tradeoff"><span class="sev high">Breaks</span><div><span class="t">Dev builds with <code>enableBabelRuntime: false</code> fail to compile generators and async functions that destructure</span><span class="b">With <code>dev: true</code>, the preset adds <code>@babel/plugin-transform-regenerator</code> itself when the runtime transform is off. Regenerator's hoisting expects destructuring to be lowered already, and throws <code>Property name expected type of string but got undefined</code> on e.g. <code>async function f(x) { const {a} = await x; }</code>. Reproduced with the 0.88 preset. Fix before landing: keep the destructuring transform whenever regenerator runs. (Separately, with the default runtime setting regenerator never runs in dev at all, contrary to the preset's comment.)</span></div></div>
@@ -204,7 +204,7 @@ pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: aut
       </ul>
     </div>
   </section>
-  <section>
+  <section id="fast-destructure">
     <h2>Follow-up: -Xenable-fast-destructure</h2>
     <div class="prose" style="display:grid;gap:12px">
       <p>Hermes has a hidden compiler flag, <code>-Xenable-fast-destructure</code> (also implied by <code>-Xenable-fast-noncompliant</code>), described as "UNSUPPORTED: Enable a faster, but non-compliant, array destructuring". It was not benchmarked on device: its effect is narrow enough to be read from the compiler, and it does not touch any of the tradeoffs above.</p>
@@ -225,6 +225,56 @@ pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: aut
       <p>That recovers roughly a tenth of the 0.1–0.5% that native destructuring adds to bytecode.</p>
       <p><strong>Compatibility.</strong> For arrays nothing observable changes, because array iterators have no <code>return()</code>. For generators and custom iterables it does: if a default initialiser or a target throws mid-pattern, <code>return()</code> is skipped, so a generator's <code>finally</code> cleanup does not run.</p>
       <p><strong>Recommendation.</strong> Don't adopt it alongside this change. It would mean passing an unsupported, non-compliant flag in both the Xcode and Gradle bundling steps for a 0.01–0.05% bytecode saving and no expected runtime gain.</p>
+    </div>
+  </section>
+  <section id="bytecode-size">
+    <h2>Follow-up: where the bytecode size increase comes from</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Almost all of it is the code Hermes emits inline for array destructuring, and most of that is per-element bookkeeping around the iterator rather than the iterator operations themselves. Object patterns compile to the same bytecode as Babel's output, and object rest is smaller.</p>
+      <p>Opcode-level differences between the two builds, release bytecode for Android:</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Instructions</th><th>RNTester</th><th>Mattermost</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">Added by native array destructuring</td></tr>
+        <tr><td>Mov (register copies)</td><td>+8.8 KB</td><td>+39.5 KB</td></tr>
+        <tr><td>JmpTrue (done and skip branches)</td><td>+4.2 KB</td><td>+20.6 KB</td></tr>
+        <tr><td>IteratorNext</td><td>+2.9 KB</td><td>+13.9 KB</td></tr>
+        <tr><td>StrictEq (done checks)</td><td>+2.9 KB</td><td>+13.8 KB</td></tr>
+        <tr><td>LoadConstUndefined (defaults)</td><td>+2.1 KB</td><td>+10.2 KB</td></tr>
+        <tr><td>IteratorBegin and IteratorClose</td><td>+2.2 KB</td><td>+10.2 KB</td></tr>
+        <tr class="group"><td colspan="3">Removed with Babel's helpers</td></tr>
+        <tr><td>Call2 and Call3 (helper calls)</td><td>−4.6 KB</td><td>−19.0 KB</td></tr>
+        <tr><td>GetByIndex (<code>_ref[0]</code>)</td><td>−3.9 KB</td><td>−18.1 KB</td></tr>
+        <tr><td>GetByIdShort (<code>.default</code>)</td><td>−2.7 KB</td><td>−9.1 KB</td></tr>
+        <tr><td>Helper access through the environment</td><td>−2.0 KB</td><td>−8.9 KB</td></tr>
+        <tr class="group"><td colspan="3">Total</td></tr>
+        <tr><td>Bytecode</td><td>+8.0 KB (+0.7%)</td><td>+33.7 KB (+0.3%)</td></tr>
+        <tr><td>Array destructuring patterns</td><td>373</td><td>1,663</td></tr>
+        <tr><td>Net per pattern</td><td>about +21 B</td><td>about +20 B</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>In Mattermost about 14 KB of object-literal instructions also switched between their long and short encodings as buffer offsets shifted; that is layout churn, not a destructuring cost. Strings, literal buffers and function counts are otherwise roughly neutral.</p>
+      <p>For <code>var [x, y] = a</code>, Hermes emits:</p>
+    </div>
+    <pre style="margin:0;background:var(--code-bg);padding:12px 14px;overflow-x:auto;font:0.82rem/1.5 var(--font-mono)">IteratorBegin r5, r6
+Mov r3, r6 ; IteratorNext r3, r5, r3 ; Mov r4, r5
+LoadConstUndefined r1 ; StrictEq r0, r4, r1          ; done?
+LoadConstUndefined r4 ; JmpTrue L1, r0 ; Mov r4, r3   ; value, or undefined when done
+L1: LoadConstUndefined r3 ; JmpTrue L2, r0            ; skip the next() once done
+IteratorNext r6, r5, r6 ; Mov r7, r5 ; StrictEq r2, r7, r1 ; …
+L2: JmpTrue L3, r0 ; IteratorClose r5, 0</pre>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Each element pays for a done check, a conditional default to <code>undefined</code>, a branch that skips later <code>next()</code> calls, and register copies, about 19 bytes against a 4-byte <code>IteratorNext</code>. <code>Mov</code> alone is 38% of the added bytes.</p>
+      <h3>Ways Hermes could claim it back</h3>
+      <ul class="tight">
+        <li><strong>Let iterator instructions handle exhaustion.</strong> Hermes already marks a finished iterator by setting its register to <code>undefined</code>. An <code>IteratorNext</code> variant that yields <code>undefined</code> from a finished iterator, and an <code>IteratorClose</code> that does nothing for one, would let the compiler drop the per-element check, branch and default: one 4-byte instruction per element. Estimated from the opcode counts, RNTester would add about 5 KB against the 13.8 KB removed, so native destructuring would come out smaller than Babel's output, with fewer branches on the normal path too. This needs a new opcode or a bytecode version bump.</li>
+        <li><strong>A fused array-destructure instruction.</strong> Something like <code>DestructureArray dst, count, src</code> could fill consecutive registers when the source is an array with the default iterator, which <code>IteratorBegin</code> already detects, and fall back to the generic sequence otherwise: about 5 bytes per pattern plus one per element.</li>
+        <li><strong>Fewer register copies.</strong> Many <code>Mov</code>s look like artefacts of lowering the iterator and done flag through stack slots; better coalescing after destructuring could remove some without new instructions.</li>
+        <li><strong>Babel's special cases, at compile time.</strong> When the right-hand side is an array literal, or a rest parameter that is known to be an array, Hermes could assign elements directly as Babel does. That would fix both the size and the 2–11× slowdowns <a href="#tradeoffs">above</a>.</li>
+      </ul>
+      <p class="note">The per-element saving and the RNTester estimate are derived from opcode counts and encodings, not from a prototype. Meta's increase scales with its number of array patterns and its own Babel configuration.</p>
     </div>
   </section>
 </main>
