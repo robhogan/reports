@@ -176,7 +176,7 @@ details[open] summary { margin-bottom: 10px; }
         <li><strong>Where native wins:</strong> It pauses on the line the breakpoint was set on, with the right locals. Regenerator often pauses one line early, because consecutive statements merge into one of its <code>case</code> blocks.</li>
         <li><strong>Stacks and stepping:</strong> Native <code>Error.stack</code> frames carry the real function names (<code>gen</code> rather than <code>anonymous</code>), and <code>stepInto</code> from <code>it.next()</code> goes straight into the body instead of through about ten frames of regenerator runtime.</li>
         <li><strong>The same either way:</strong> Pause on exceptions fires the same number of times, and stepping over a <code>yield</code> or <code>await</code> returns to the caller with both, which is how Hermes's stepper treats a suspension.</li>
-        <li><strong>Lazy compilation:</strong> Hermes compiles sources over 64 KB lazily, which includes any real dev bundle, so the fixed versions were swept both ways. On .0.16, about half of all breakpoints in lazily compiled functions never pause in either variant, from a separate bug fixed in 260318099.0.0, so that row is left out.</li>
+        <li><strong>Lazy compilation:</strong> Hermes compiles sources over 64 KB lazily, which includes any real dev bundle, so the fixed versions were swept both ways. On .0.16, a breakpoint in a function that hasn't been compiled yet never pauses unless the request carries a column that lands on code. This affects plain functions too and was fixed in 260318099.0.0. The sweep sends line-only requests, which DevTools doesn't (it sends the source-mapped column), so that row is left out.</li>
       </ul>
     </div>
   </section>
