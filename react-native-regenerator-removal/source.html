@@ -1,0 +1,221 @@
+<main class="page">
+  <header>
+    <div class="eyebrow">@react-native/babel-preset · investigation</div>
+    <h1>Removing regenerator from Hermes dev builds</h1>
+    <p class="lede">Whether React Native's Babel preset still needs to lower generators in Hermes dev builds, now that Hermes has fixed the bug that made it necessary. Checked through Hermes's own CDP debugger harness on four Hermes versions, with a breakpoint on every line of 248 lines of fixtures.</p>
+    <div class="meta">
+      <span>RN main <span class="mono">c7429b0</span></span><span>Hermes 250829098.0.16, 260318099.0.1, .0.2, .0.4</span><span>Babel 7.29</span><span>macOS</span><span>Investigated 2026-10-21</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v pos">Safe on main and 0.88</span><span class="d">The Hermes bug behind the workaround is fixed in 260318099.0.2. Main ships .0.2 and 0.88 ships .0.4.</span></div>
+      <div><span class="k">Not on 0.87</span><span class="v neg">250829098.0.17</span><span class="d">No 250829098.x release has the fix, so 0.87 still needs regenerator in dev.</span></div>
+      <div><span class="k">Breakpoint sweep, .0.2 and .0.4</span><span class="v pos">47 better, 3 worse</span><span class="d">Native generators against regenerator, over 248 lines. On the pre-fix 250829098.0.16, native was worse on 22.</span></div>
+      <div><span class="k">Reach today</span><span class="v">Narrow</span><span class="d">The flag only lowers generators when <code>enableBabelRuntime: false</code>, and stock RN CLI dev builds never use a Hermes profile.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>The preset turns on regenerator for Hermes-profile dev builds because "it's not possible to inspect local variables when paused in a generator". That was one Hermes bug, affecting breakpoints on the line of a generator's last <code>yield</code>, and it's fixed. With it fixed, native generators debug better than regenerator output on most lines, and removing the flag makes dev output match release.</p>
+      <p>Native-generator debugging isn't perfect yet. Four smaller bugs remain on .0.2 and .0.4, from the same kind of root cause as the one that was fixed. Most configs already run native generators in dev, though, so most users hit them today regardless of this flag. They need a Hermes fix, not a Babel workaround.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The original bug</h2>
+    <div class="prose stack">
+      <p>A breakpoint on the line of a generator's last <code>yield</code> pauses when the generator is <em>called</em>, before its body has run. The paused frame shows only the global scope, every local evaluates to <code>undefined</code>, and the breakpoint never fires at the real code afterwards. Breakpoints on other lines, <code>debugger;</code> statements and stepping all work.</p>
+      <p>The cause was in Hermes's <code>LowerGeneratorFunction</code> pass. It stamped the synthetic resume prologue, which runs on every entry and has no lexical scope, with the source location of the last <code>yield</code> it had processed. A line breakpoint resolves to the lowest bytecode address on its line, so it landed on that prologue.</p>
+      <p>Michael Leon (<a href="https://github.com/micleo2">@micleo2</a>) fixed it in "Fix debug info source location leakage of generator prologue": <span class="mono">c36880fe6</span> on static_h on 2026-08-03, grafted to the stable branch as <a href="https://github.com/facebook/hermes/commit/d1238c8c61907ad41caadf579f6739f724e959a3"><span class="mono">d1238c8c6</span></a> on 2026-08-10. It first shipped in hermes-v260318099.0.2 on 2026-09-08, and React Native main moved to that release the same day in <a href="https://github.com/react/react-native/pull/58397">react/react-native#58397</a>.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Hermes</th><th class="l">Last-yield bug</th><th class="l">Shipped by</th></tr></thead>
+      <tbody>
+        <tr><td>260318099.0.4</td><td class="l pos">Fixed (tested)</td><td class="l">0.88-stable</td></tr>
+        <tr><td>260318099.0.3</td><td class="l pos">Fixed (fix in tag)</td><td class="l">-</td></tr>
+        <tr><td>260318099.0.2</td><td class="l pos">Fixed (tested)</td><td class="l">RN main since #58397 (2026-09-08)</td></tr>
+        <tr><td>260318099.0.1</td><td class="l neg">Present (tested)</td><td class="l">RN main from #57647 (2026-07-23)</td></tr>
+        <tr><td>250829098.0.17-.0.19</td><td class="l neg">Present (fix not in tag)</td><td class="l">0.87-stable pins .0.17</td></tr>
+        <tr><td>250829098.0.16</td><td class="l neg">Present (tested)</td><td class="l">RN main until #57647</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">The debugger and generator-lowering code is identical in .0.2 and .0.4, and static_h (at <span class="mono">e760a68ab</span>, 2026-10-20) has no further generator-debugging fixes.</p>
+  </section>
+
+  <section>
+    <h2>What the flag reaches</h2>
+    <div class="prose"><p><code>enableRegenerator</code> is <code>isHermesProfile &amp;&amp; dev</code>. It gates two things, and only one of them depends on the Babel runtime setting.</p></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Config, <code>dev: true</code></th><th class="l">Generators</th><th class="l">Loose <code>for...of</code>, <code>?.</code>, <code>??</code>, catch binding</th></tr></thead>
+      <tbody>
+        <tr><td>hermes-stable, default <code>enableBabelRuntime</code></td><td class="l">Native</td><td class="l neg">Lowered</td></tr>
+        <tr><td>hermes-stable, <code>enableBabelRuntime: false</code></td><td class="l neg">Regenerator</td><td class="l neg">Lowered</td></tr>
+        <tr><td><code>default</code> profile (stock RN CLI dev server)</td><td class="l">Native</td><td class="l">Native</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>The Babel runtime decides generator lowering.</strong> With the runtime enabled, the flag only sets transform-runtime's <code>regenerator</code> option, which rewrites references to <code>regeneratorRuntime</code> but doesn't lower generators. <code>@babel/plugin-transform-regenerator</code> is added only when <code>enableBabelRuntime === false</code>, as in React Native's own Jest config.</li>
+        <li><strong>Stock RN CLI dev builds never see a Hermes profile.</strong> Metro's dev server falls back to the <code>default</code> profile when a bundle URL has no <code>unstable_transformProfile</code>, and React Native's native bundle URLs don't set one. <code>react-native bundle</code> defaults to <code>hermes-stable</code>.</li>
+        <li><strong>The helper lowerings change semantics.</strong> Loose <code>for...of</code> never calls <code>iterator.return()</code>. With the flag, <code>for (const x of gen()) break;</code> skips the generator's <code>finally</code> block. Without it, <code>finally</code> runs, as it does in release.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Breakpoint sweep</h2>
+    <div class="prose stack">
+      <p>Main's preset, with <code>dev: true</code> and <code>enableBabelRuntime: false</code>, built five fixtures two ways: as is (regenerator), and with <code>enableRegenerator</code> forced off (native generators). The fixtures cover generators with default and destructured params, <code>try</code>/<code>finally</code>, <code>yield*</code>, loops, closures and class and object methods, plus async functions, async generators, exceptions and <code>Error.stack</code>.</p>
+      <p>Each output got a breakpoint on every source line, mapped to the lowest generated line for that source line. Every pause was mapped back through the source map, and every local in the file was evaluated on the paused frame. A line counts as native-better or native-worse if native pauses on that source line more or fewer times, or shows more or fewer locals there. Mixed lines are the loop headers described below.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Hermes</th><th>Compilation</th><th>Identical</th><th>Native better</th><th>Native worse</th><th>Mixed</th><th>Different, equivalent</th></tr></thead>
+      <tbody>
+        <tr><td>260318099.0.4</td><td>eager / lazy</td><td>184 / 182</td><td class="pos">47 / 49</td><td>3 / 3</td><td>3 / 3</td><td>11 / 11</td></tr>
+        <tr><td>260318099.0.2</td><td>eager / lazy</td><td>183 / 182</td><td class="pos">47 / 49</td><td>3 / 3</td><td>3 / 3</td><td>11 / 11</td></tr>
+        <tr><td>250829098.0.16</td><td>eager</td><td>164</td><td>49</td><td class="neg">22</td><td>3</td><td>10</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>Where native wins:</strong> It pauses on the line the breakpoint was set on, with the right locals. Regenerator often pauses one line early, because consecutive statements merge into one of its <code>case</code> blocks.</li>
+        <li><strong>Stacks and stepping:</strong> Native <code>Error.stack</code> frames carry the real function names (<code>gen</code> rather than <code>anonymous</code>), and <code>stepInto</code> from <code>it.next()</code> goes straight into the body instead of through about ten frames of regenerator runtime.</li>
+        <li><strong>The same either way:</strong> Pause on exceptions fires the same number of times, and stepping over a <code>yield</code> or <code>await</code> returns to the caller with both, which is how Hermes's stepper treats a suspension.</li>
+        <li><strong>Lazy compilation:</strong> Hermes compiles sources over 64 KB lazily, which includes any real dev bundle, so the fixed versions were swept both ways. On .0.16, a breakpoint in a function that hasn't been compiled yet never pauses unless the request carries a column that lands on code. This affects plain functions too and was fixed in 260318099.0.0. The sweep sends line-only requests, which DevTools doesn't (it sends the source-mapped column), so that row is left out.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>What native generators still get wrong</h2>
+    <div class="prose"><p>Each of these reproduces on plain source, with no Babel involved, against a plain-function control that behaves correctly. All four are present on .0.2 and .0.4.</p></div>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Stepping</span><div><span class="t">Stepping through <code>try</code>/<code>catch</code> stops on a <code>catch</code> line that never runs</span><span class="b">Stepping over the statement before a <code>try</code> pauses on the <code>catch (e)</code> line first, then on the real code, and can skip the first statement in the <code>try</code> body. In an async function, stepping from before the <code>try</code> went to the <code>catch</code> line and then out of the function, never pausing on the <code>await</code>. The same code as a plain function steps through every line in order. Async functions behave the same way, because Hermes lowers them through the same generator pass. Regenerator steps correctly here.</span></div></div>
+      <div class="tradeoff"><span class="sev med">Breakpoint</span><div><span class="t">A breakpoint on a <code>throw</code> after a resume never fires</span><span class="b">The lowest address on the line belongs to a reloaded value placed in a block the normal path doesn't run. The same <code>throw</code> in a plain function pauses as expected.</span></div></div>
+      <div class="tradeoff"><span class="sev med">Breakpoint</span><div><span class="t">A breakpoint on a <code>yield*</code> line never fires</span><span class="b">The same mechanism as the <code>throw</code> case. On .0.16 this line hit the old prologue bug instead, when the <code>yield*</code> was the generator's last yield.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Breakpoint</span><div><span class="t">A loop-header breakpoint fires after each resume, never on loop entry</span><span class="b">Generator lowering places the resume path before the entry path in bytecode, so the line's lowest address is the rotated loop check after a resume. A plain function fires once, on entry. This is unchanged since .0.16.</span></div></div>
+    </div>
+    <div class="prose stack">
+      <p>The cause is the same class as the fixed bug. <code>LowerGeneratorFunction</code> still gives synthetic and reload instructions borrowed user source locations at three sites the prologue fix didn't touch: the <code>try</code>/<code>catch</code> setup in <code>lowerToSwitch</code>, <code>moveCrossingValuesToOuter</code> and <code>moveInnerPhisToOuter</code>. Stepping also stops at these instructions, and then skips the real statement after them, because they share its statement index.</p>
+      <p>These bugs don't argue for keeping the flag. Every config with the Babel runtime enabled already runs native generators in dev, so removing the flag only exposes them to setups that disable the runtime.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>An unrelated Hermes bug</h2>
+    <div class="prose stack">
+      <p>In a Debug build of Hermes, listing the parameter scope of any function with a default parameter fails an assertion and aborts, on every version tested: <code>VariableScope must be set for lexical scopes</code> in <code>HBC.cpp</code>. That happens when a client calls <code>Runtime.getProperties</code> on that closure scope, which is what expanding it in DevTools does. Plain functions fail the same way, and regenerator output does too, because the outer function keeps its parameters. Destructured-only and simple parameters are fine.</p>
+      <p>React Native's debug Hermes artifacts are built as <code>Release</code> with the debugger enabled, so the assertion is compiled out in apps. What that build does instead wasn't tested.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The proposed change</h2>
+    <div class="prose stack">
+      <p>A change against main <span class="mono">c7429b0</span> removes <code>enableRegenerator</code>, the five plugins it gated and the destructuring exception that existed only for regenerator. transform-runtime keeps an explicit <code>regenerator: false</code>, which every config other than Hermes dev already gets. The preset drops its five unused plugin dependencies. Only two ranges leave <code>yarn.lock</code>, because other packages still use the other three plugins.</p>
+      <p>The six <code>hermes-*-dev*</code> output fixtures now keep <code>?.</code>, <code>??</code>, <code>for...of</code> and <code>catch {}</code>, with no loose helpers. The preset's 130 tests pass and Flow is clean. The full Jest suite fails the same 18 environment-dependent suites with and without the change.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li>Remove <code>enableRegenerator</code> on main. It's also safe for 0.88-stable, which ships .0.4.</li>
+        <li>Keep it on 0.87-stable, unless the Hermes fix is grafted onto a 250829098.x release.</li>
+        <li>Report the four remaining native-generator bugs, and the default-parameter assertion, to Hermes. Repros are below.</li>
+        <li>Reconcile with <a href="https://github.com/react/react-native/pull/58255">react/react-native#58255</a>, which proposes the opposite (always lowering generators in dev), and <a href="https://github.com/react/react-native/pull/58410">#58410</a>, which cites this flag in its reasoning.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <p>Everything ran through Hermes's <code>CDPAgent</code> unit-test fixture (<code>unittests/API/CDPAgentTest.cpp</code>) with one added test, not a real DevTools session. Hermes was built in Debug with <code>HERMES_ENABLE_DEBUGGER=ON</code> at each tag. The test sets breakpoints with <code>Debugger.setBreakpointByUrl</code> by line, optionally sets pause on exceptions, and runs the script. At each pause it lists every scope with <code>Runtime.getProperties</code>, evaluates watch expressions with <code>Debugger.evaluateOnCallFrame</code>, then resumes or steps a fixed number of times. The runtime has its microtask queue enabled and drained after the script, as in React Native.</p>
+      <p>Babel helpers were inlined (<code>enableBabelRuntime: false</code>) rather than loaded from <code>@babel/runtime</code>. Breakpoints on transformed output went on the lowest generated line each source line maps to, which approximates what DevTools does with a source map. The Hermes commit history and the lowering-pass analysis come from the static_h and 260318099.0.0-stable branches.</p>
+    </div>
+    <details class="prose">
+      <summary>Last-yield repro</summary>
+<pre>// Breakpoint on the `const got = yield v + a;` line (the last yield).
+// Hermes &lt;= 260318099.0.1: pauses at the `gen(10)` call, global scope only, every local undefined.
+// Hermes &gt;= 260318099.0.2: pauses from `it.next(21)` with a, v, l and c visible.
+function plain(a) {
+  var v = 1;
+  let l = 'two';
+  const c = {three: 3};
+  return v + l + c.three + a;
+}
+
+function* gen(a) {
+  var v = 1;
+  let l = 'two';
+  const c = {three: 3};
+  const got = yield v + a;
+  var after = got * 2;
+  return after + l + c.three;
+}
+
+plain(10);
+var it = gen(10);
+it.next();
+it.next(21);</pre>
+    </details>
+    <details class="prose">
+      <summary>Remaining-bug repros</summary>
+<pre>// Breakpoint on `let state = 'start'`, then step over repeatedly.
+// genTry pauses on `} catch (e) {` (never runs), then `const v = yield flag`, then leaves.
+// plainTry steps through every line in order.
+function plainTry(flag) {
+  let state = 'start';
+  try {
+    const v = flag ? 1 : 0;
+    state = 'ok' + v;
+  } catch (e) {
+    state = 'caught';
+  }
+  return state;
+}
+function* genTry(flag) {
+  let state = 'start';
+  try {
+    const v = yield flag;
+    state = 'ok' + v;
+  } catch (e) {
+    state = 'caught';
+  }
+  return state;
+}
+
+// Breakpoint on the throw line in thrower never fires. The one in plainThrower does.
+function* thrower(limit) {
+  const marker = 'm' + limit;
+  const got = yield 1;
+  if (got &gt; limit) {
+    throw new RangeError(marker + ':' + got);
+  }
+  return got;
+}
+
+// Breakpoint on the yield* line never fires.
+function* inner(n) {
+  yield n + 1;
+  yield n + 2;
+}
+function* delegating(n) {
+  const before = n;
+  const got = yield* inner(n);
+  return before + 1;
+}
+
+// Default-param assertion: pause anywhere in f, then call Runtime.getProperties
+// on its closure scope (the parameter environment).
+function f(a, b = a * 2) {
+  var sum = a + b;
+  debugger;
+  return sum;
+}</pre>
+    </details>
+  </section>
+</main>

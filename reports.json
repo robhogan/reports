@@ -3,18 +3,54 @@
     "slug": "metro-1676-safety-review",
     "title": "Dropping graceful-fs from Metro",
     "description": "Safety review of react/metro#1676: what Metro loses without graceful-fs, checked against its source and stress-tested under a 256-fd hard limit.",
-    "date": "2026-10-18"
+    "date": "2026-10-18",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-18",
+        "note": "First published."
+      }
+    ]
   },
   {
     "slug": "react-native-58965-destructuring",
     "title": "Native destructuring on Hermes V1",
     "description": "On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.",
-    "date": "2026-10-12"
+    "date": "2026-10-12",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-18",
+        "note": "First published."
+      },
+      {
+        "n": 2,
+        "date": "2026-10-18",
+        "note": "Added a follow-up on Hermes' -Xenable-fast-destructure flag."
+      },
+      {
+        "n": 3,
+        "date": "2026-10-21",
+        "note": "Added a breakdown of where the bytecode size increase comes from."
+      }
+    ]
   },
   {
     "slug": "react-native-regenerator-removal",
     "title": "Removing regenerator from Hermes dev builds",
     "description": "Whether @react-native/babel-preset still needs regenerator in Hermes dev builds now that Hermes 260318099.0.2 fixed generator breakpoints: version history, a breakpoint-by-breakpoint comparison of 248 lines, and the native-generator bugs that remain.",
-    "date": "2026-10-21"
+    "date": "2026-10-21",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-21",
+        "note": "First published."
+      },
+      {
+        "n": 2,
+        "date": "2026-10-21",
+        "note": "Clarified why the lazy-compilation sweep on 250829098.0.16 is left out."
+      }
+    ]
   }
 ]

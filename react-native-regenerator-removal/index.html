@@ -3,102 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<style>
-  :root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
-  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  img { max-width: 100%; }
-  [hidden] { display: none !important; }
-</style>
 <title>Removing regenerator from Hermes dev builds</title>
+<meta name="description" content="Whether @react-native/babel-preset still needs regenerator in Hermes dev builds now that Hermes 260318099.0.2 fixed generator breakpoints: version history, a breakpoint-by-breakpoint comparison of 248 lines, and the native-generator bugs that remain.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
-<style>
-/* Layout: single reading column (~72ch) with full-width data blocks that scroll inside their own frames. */
-:root {
-  --bg: #fbfbfa;
-  --surface: #f2f2ef;
-  --fg: #16181c;
-  --fg-2: #4d5159;
-  --fg-3: #7a7e86;
-  --rule: #dddcd6;
-  --accent: #2a5fa8;
-  --faster: #2a78d6;
-  --slower: #e34948;
-  --code-bg: #eeede8;
-  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
-  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
-    --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
-  --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
-}
-* { box-sizing: border-box; }
-body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--font-body); }
-.page { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 80px; display: grid; gap: 56px; }
-.prose { max-width: 72ch; }
-h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
-h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); letter-spacing: -0.01em; }
-h2 { font-size: 1.6rem; }
-h3 { font-size: 1.15rem; }
-p { margin: 0; }
-section { display: grid; gap: 18px; min-width: 0; }
-.eyebrow { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
-.lede { font-size: 1.15rem; color: var(--fg-2); max-width: 68ch; }
-code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
-code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; overflow-wrap: anywhere; }
-a { color: var(--accent); }
-.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--fg-3); font-size: 0.9rem; }
-.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
-.verdict > div { background: var(--bg); padding: 18px 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
-.verdict .k { font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--fg-3); }
-.verdict .v { font: 600 1.7rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
-.verdict .d { color: var(--fg-2); font-size: 0.92rem; }
-.pos { color: var(--faster); }
-.neg { color: var(--slower); }
-ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
-.tradeoffs { display: grid; gap: 0; border-top: 1px solid var(--rule); }
-.tradeoff { display: grid; grid-template-columns: 7.5rem 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
-.tradeoff .sev { font: 500 0.72rem/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; padding-top: 3px; }
-.sev.high { color: var(--slower); }
-.sev.low { color: var(--fg-3); }
-.sev.med { color: var(--fg-2); }
-.tradeoff > div { min-width: 0; display: grid; gap: 6px; }
-.tradeoff .t { font-weight: 600; }
-.tradeoff .b { color: var(--fg-2); font-size: 0.95rem; }
-.scroll { overflow-x: auto; border: 1px solid var(--rule); }
-table { border-collapse: collapse; width: 100%; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
-th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font: 500 0.72rem/1.3 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-3); background: var(--surface); }
-th:first-child, td:first-child { text-align: left; }
-td:first-child { font-family: var(--font-mono); font-size: 0.82rem; white-space: normal; min-width: 14rem; }
-td.l, th.l { text-align: left; white-space: normal; min-width: 16rem; }
-tr.group td { background: var(--surface); font: 600 0.78rem/1.3 var(--font-body); color: var(--fg-2); }
-.note { color: var(--fg-2); font-size: 0.92rem; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
-.grid2 > * { min-width: 0; }
-pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: auto; font: 0.82rem/1.5 var(--font-mono); }
-details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
-details[open] summary { margin-bottom: 10px; }
-@media (max-width: 640px) {
-  .tradeoff { grid-template-columns: 1fr; gap: 4px; }
-}
-</style>
+<link rel="stylesheet" href="../assets/report.css">
 </head>
 <body>
 <main class="page">
-  <header style="display:grid;gap:16px">
+  <header>
     <div class="eyebrow">@react-native/babel-preset · investigation</div>
     <h1>Removing regenerator from Hermes dev builds</h1>
     <p class="lede">Whether React Native's Babel preset still needs to lower generators in Hermes dev builds, now that Hermes has fixed the bug that made it necessary. Checked through Hermes's own CDP debugger harness on four Hermes versions, with a breakpoint on every line of 248 lines of fixtures.</p>
     <div class="meta">
-      <span>RN main <span class="mono">c7429b0</span></span><span>Hermes 250829098.0.16, 260318099.0.1, .0.2, .0.4</span><span>Babel 7.29</span><span>macOS</span><span>Investigated 2026-10-21</span>
+      <span>RN main <span class="mono">c7429b0</span></span><span>Hermes 250829098.0.16, 260318099.0.1, .0.2, .0.4</span><span>Babel 7.29</span><span>macOS</span><span>Investigated 2026-10-21</span><span><a href="#revisions">Revision 2, 2026-10-21</a></span>
     </div>
   </header>
 
@@ -110,7 +28,7 @@ details[open] summary { margin-bottom: 10px; }
       <div><span class="k">Breakpoint sweep, .0.2 and .0.4</span><span class="v pos">47 better, 3 worse</span><span class="d">Native generators against regenerator, over 248 lines. On the pre-fix 250829098.0.16, native was worse on 22.</span></div>
       <div><span class="k">Reach today</span><span class="v">Narrow</span><span class="d">The flag only lowers generators when <code>enableBabelRuntime: false</code>, and stock RN CLI dev builds never use a Hermes profile.</span></div>
     </div>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>The preset turns on regenerator for Hermes-profile dev builds because "it's not possible to inspect local variables when paused in a generator". That was one Hermes bug, affecting breakpoints on the line of a generator's last <code>yield</code>, and it's fixed. With it fixed, native generators debug better than regenerator output on most lines, and removing the flag makes dev output match release.</p>
       <p>Native-generator debugging isn't perfect yet. Four smaller bugs remain on .0.2 and .0.4, from the same kind of root cause as the one that was fixed. Most configs already run native generators in dev, though, so most users hit them today regardless of this flag. They need a Hermes fix, not a Babel workaround.</p>
     </div>
@@ -118,7 +36,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>The original bug</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>A breakpoint on the line of a generator's last <code>yield</code> pauses when the generator is <em>called</em>, before its body has run. The paused frame shows only the global scope, every local evaluates to <code>undefined</code>, and the breakpoint never fires at the real code afterwards. Breakpoints on other lines, <code>debugger;</code> statements and stepping all work.</p>
       <p>The cause was in Hermes's <code>LowerGeneratorFunction</code> pass. It stamped the synthetic resume prologue, which runs on every entry and has no lexical scope, with the source location of the last <code>yield</code> it had processed. A line breakpoint resolves to the lowest bytecode address on its line, so it landed on that prologue.</p>
       <p>Michael Leon (<a href="https://github.com/micleo2">@micleo2</a>) fixed it in "Fix debug info source location leakage of generator prologue": <span class="mono">c36880fe6</span> on static_h on 2026-08-03, grafted to the stable branch as <a href="https://github.com/facebook/hermes/commit/d1238c8c61907ad41caadf579f6739f724e959a3"><span class="mono">d1238c8c6</span></a> on 2026-08-10. It first shipped in hermes-v260318099.0.2 on 2026-09-08, and React Native main moved to that release the same day in <a href="https://github.com/react/react-native/pull/58397">react/react-native#58397</a>.</p>
@@ -159,7 +77,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>Breakpoint sweep</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>Main's preset, with <code>dev: true</code> and <code>enableBabelRuntime: false</code>, built five fixtures two ways: as is (regenerator), and with <code>enableRegenerator</code> forced off (native generators). The fixtures cover generators with default and destructured params, <code>try</code>/<code>finally</code>, <code>yield*</code>, loops, closures and class and object methods, plus async functions, async generators, exceptions and <code>Error.stack</code>.</p>
       <p>Each output got a breakpoint on every source line, mapped to the lowest generated line for that source line. Every pause was mapped back through the source map, and every local in the file was evaluated on the paused frame. A line counts as native-better or native-worse if native pauses on that source line more or fewer times, or shows more or fewer locals there. Mixed lines are the loop headers described below.</p>
     </div>
@@ -190,7 +108,7 @@ details[open] summary { margin-bottom: 10px; }
       <div class="tradeoff"><span class="sev med">Breakpoint</span><div><span class="t">A breakpoint on a <code>yield*</code> line never fires</span><span class="b">The same mechanism as the <code>throw</code> case. On .0.16 this line hit the old prologue bug instead, when the <code>yield*</code> was the generator's last yield.</span></div></div>
       <div class="tradeoff"><span class="sev low">Breakpoint</span><div><span class="t">A loop-header breakpoint fires after each resume, never on loop entry</span><span class="b">Generator lowering places the resume path before the entry path in bytecode, so the line's lowest address is the rotated loop check after a resume. A plain function fires once, on entry. This is unchanged since .0.16.</span></div></div>
     </div>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>The cause is the same class as the fixed bug. <code>LowerGeneratorFunction</code> still gives synthetic and reload instructions borrowed user source locations at three sites the prologue fix didn't touch: the <code>try</code>/<code>catch</code> setup in <code>lowerToSwitch</code>, <code>moveCrossingValuesToOuter</code> and <code>moveInnerPhisToOuter</code>. Stepping also stops at these instructions, and then skips the real statement after them, because they share its statement index.</p>
       <p>These bugs don't argue for keeping the flag. Every config with the Babel runtime enabled already runs native generators in dev, so removing the flag only exposes them to setups that disable the runtime.</p>
     </div>
@@ -198,7 +116,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>An unrelated Hermes bug</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>In a Debug build of Hermes, listing the parameter scope of any function with a default parameter fails an assertion and aborts, on every version tested: <code>VariableScope must be set for lexical scopes</code> in <code>HBC.cpp</code>. That happens when a client calls <code>Runtime.getProperties</code> on that closure scope, which is what expanding it in DevTools does. Plain functions fail the same way, and regenerator output does too, because the outer function keeps its parameters. Destructured-only and simple parameters are fine.</p>
       <p>React Native's debug Hermes artifacts are built as <code>Release</code> with the debugger enabled, so the assertion is compiled out in apps. What that build does instead wasn't tested.</p>
     </div>
@@ -206,7 +124,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>The proposed change</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>A change against main <span class="mono">c7429b0</span> removes <code>enableRegenerator</code>, the five plugins it gated and the destructuring exception that existed only for regenerator. transform-runtime keeps an explicit <code>regenerator: false</code>, which every config other than Hermes dev already gets. The preset drops its five unused plugin dependencies. Only two ranges leave <code>yarn.lock</code>, because other packages still use the other three plugins.</p>
       <p>The six <code>hermes-*-dev*</code> output fixtures now keep <code>?.</code>, <code>??</code>, <code>for...of</code> and <code>catch {}</code>, with no loose helpers. The preset's 130 tests pass and Flow is clean. The full Jest suite fails the same 18 environment-dependent suites with and without the change.</p>
     </div>
@@ -226,7 +144,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>Method</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>Everything ran through Hermes's <code>CDPAgent</code> unit-test fixture (<code>unittests/API/CDPAgentTest.cpp</code>) with one added test, not a real DevTools session. Hermes was built in Debug with <code>HERMES_ENABLE_DEBUGGER=ON</code> at each tag. The test sets breakpoints with <code>Debugger.setBreakpointByUrl</code> by line, optionally sets pause on exceptions, and runs the script. At each pause it lists every scope with <code>Runtime.getProperties</code>, evaluates watch expressions with <code>Debugger.evaluateOnCallFrame</code>, then resumes or steps a fixed number of times. The runtime has its microtask queue enabled and drained after the script, as in React Native.</p>
       <p>Babel helpers were inlined (<code>enableBabelRuntime: false</code>) rather than loaded from <code>@babel/runtime</code>. Breakpoints on transformed output went on the lowest generated line each source line maps to, which approximates what DevTools does with a source map. The Hermes commit history and the lowering-pass analysis come from the static_h and 260318099.0.0-stable branches.</p>
     </div>
@@ -311,6 +229,18 @@ function f(a, b = a * 2) {
   return sum;
 }</pre>
     </details>
+  </section>
+
+  <section id="revisions">
+    <h2>Revisions</h2>
+    <div class="scroll"><table class="revisions">
+      <thead><tr><th>Revision</th><th>Date</th><th class="l">Change</th></tr></thead>
+      <tbody>
+        <tr><td><a href="v/2/">2</a></td><td>2026-10-21</td><td class="l">Clarified why the lazy-compilation sweep on 250829098.0.16 is left out.</td></tr>
+        <tr><td><a href="v/1/">1</a></td><td>2026-10-21</td><td class="l">First published.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Each revision links to a frozen copy of the report as it was published. The <a href="https://github.com/robhogan/reports/commits/main/react-native-regenerator-removal">commit history</a> has every edit.</p>
   </section>
 </main>
 </body>

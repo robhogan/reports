@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+  :root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
+  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  img { max-width: 100%; }
+  [hidden] { display: none !important; }
+</style>
+<title>Hermes Native Destructuring</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: single reading column (~72ch) with full-width data blocks that scroll inside their own frames. */
+:root {
+  --bg: #fbfbfa;
+  --surface: #f2f2ef;
+  --fg: #16181c;
+  --fg-2: #4d5159;
+  --fg-3: #7a7e86;
+  --rule: #dddcd6;
+  --accent: #2a5fa8;
+  --faster: #2a78d6;
+  --slower: #e34948;
+  --mid: #c9c8c2;
+  --code-bg: #eeede8;
+  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
+    --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --mid: #45464a; --code-bg: #232428; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
+  --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --mid: #45464a; --code-bg: #232428; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--font-body); }
+.page { max-width: 1040px; margin: 0 auto; padding-inline: 20px; padding-block: 40px 80px; display: grid; gap: 56px; }
+.prose { max-width: 72ch; }
+h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); letter-spacing: -0.01em; }
+h2 { font-size: 1.6rem; }
+h3 { font-size: 1.15rem; }
+p { margin: 0; }
+section { display: grid; gap: 18px; }
+.eyebrow { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
+.lede { font-size: 1.15rem; color: var(--fg-2); max-width: 68ch; }
+code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
+code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; }
+a { color: var(--accent); }
+.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--fg-3); font-size: 0.9rem; }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.verdict > div { background: var(--bg); padding: 18px 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
+.verdict .k { font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--fg-3); }
+.verdict .v { font: 600 1.7rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
+.verdict .d { color: var(--fg-2); font-size: 0.92rem; }
+.pos { color: var(--faster); }
+.neg { color: var(--slower); }
+ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
+.tradeoffs { display: grid; gap: 0; border-top: 1px solid var(--rule); }
+.tradeoff { display: grid; grid-template-columns: 7.5rem 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
+.tradeoff .sev { font: 500 0.72rem/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; padding-top: 3px; }
+.sev.high { color: var(--slower); }
+.sev.low { color: var(--fg-3); }
+.sev.med { color: var(--fg-2); }
+.tradeoff > div { min-width: 0; display: grid; gap: 6px; }
+.tradeoff .t { font-weight: 600; }
+.tradeoff .b { color: var(--fg-2); font-size: 0.95rem; }
+.scroll { overflow-x: auto; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { font: 500 0.72rem/1.3 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-3); background: var(--surface); position: sticky; top: 0; }
+th:first-child, td:first-child { text-align: left; }
+td:first-child { font-family: var(--font-mono); font-size: 0.82rem; white-space: normal; min-width: 18rem; }
+tr.group td { background: var(--surface); font: 600 0.78rem/1.3 var(--font-body); color: var(--fg-2); text-transform: none; }
+.chart { display: grid; gap: 4px; border: 1px solid var(--rule); padding: 16px; }
+.chart-head, .chart-row { display: grid; grid-template-columns: minmax(0, 17rem) 1fr 1fr; gap: 14px; align-items: center; }
+.chart-head { padding-bottom: 6px; border-bottom: 1px solid var(--rule); margin-bottom: 4px; }
+.chart-head .plat { font: 600 0.82rem/1.2 var(--font-body); }
+.chart-row .lbl { font: 0.78rem/1.25 var(--font-mono); color: var(--fg); overflow-wrap: anywhere; }
+.chart-row svg, .chart-head svg { display: block; width: 100%; height: 22px; overflow: visible; }
+.axis { position: relative; height: 16px; margin-top: 4px; }
+.axis span { position: absolute; top: 0; transform: translateX(-50%); font: 10px/16px var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.chart text { fill: var(--fg-3); font: 10px var(--font-mono); }
+.chart .tick { stroke: var(--rule); }
+.chart .one { stroke: var(--fg-3); stroke-width: 1; }
+.chart .bar-f { fill: var(--faster); }
+.chart .bar-s { fill: var(--slower); }
+.chart .hit { fill: transparent; cursor: default; }
+.chart-row:hover .lbl { color: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--fg-2); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+.tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font: 0.78rem/1.45 var(--font-mono); padding: 8px 10px; border-radius: 4px; max-width: 320px; z-index: 10; }
+.note { color: var(--fg-2); font-size: 0.92rem; }
+.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
+.grid2 > * { min-width: 0; }
+pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: auto; font: 0.82rem/1.5 var(--font-mono); }
+@media (max-width: 640px) {
+  .chart-head, .chart-row { grid-template-columns: 1fr 1fr; }
+  .chart-head > :first-child { display: none; }
+  .chart-row .lbl { grid-column: 1 / -1; margin-top: 6px; }
+  .tradeoff { grid-template-columns: 1fr; gap: 4px; }
+}
+</style>
+<style>
+.snapshot-banner { background: var(--surface); border-bottom: 1px solid var(--rule); color: var(--fg-2); font-size: 0.9rem; }
+.snapshot-banner > div { max-width: 1040px; margin: 0 auto; padding: 10px 16px; }
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 3 of this report, published 2026-10-21. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header style="display:grid;gap:16px">
+    <div class="eyebrow">react/react-native #58965 · benchmark</div>
+    <h1>Native destructuring on Hermes V1</h1>
+    <p class="lede">What changes when <code>@react-native/babel-preset</code> stops running <code>@babel/plugin-transform-destructuring</code>, measured in release builds on a Galaxy A16 and an iPhone 12 mini.</p>
+    <div class="meta">
+      <span>RN 0.88.0-rc.4</span><span>Hermes 260318099.0.4 (Static Hermes, release, no JIT)</span><span>Measured 2026-10-12</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Cold start</span><span class="v">No change</span><span class="d">Bundle start → first commit within ±1.5% on both devices; every 95% CI spans zero (40 launches per variant per device).</span></div>
+      <div><span class="k">Re-render 40 cards</span><span class="v pos">−2.1 to −2.4%</span><span class="d">JS time from <code>setState</code> to commit after a theme change.</span></div>
+      <div><span class="k">Remount 40-card list</span><span class="v pos">−4.4 to −4.5%</span><span class="d">Same app, FlatList remount. Consistent across devices.</span></div>
+      <div><span class="k">Bytecode size</span><span class="v neg">-0.25 to +0.49%</span><span class="d">Hermes bytecode across the app bundles measured. Array patterns grow; object rest shrinks.</span></div>
+    </div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>The change is a net win for typical apps. The speedup comes from two Babel helpers that idiomatic code calls constantly: <code>slicedToArray</code> (every <code>const [x, setX] = useState()</code>) and <code>objectWithoutProperties</code> (every <code>const {style, ...rest} = props</code> in a component body, including React Native's own components). Native destructuring makes those 45–55% and about 80% faster per call. The gain is small in wall-clock terms because an app spends little of its time destructuring: the test app calls these helpers about 1,400 times to first frame, worth 0.7–1.2 ms.</p>
+      <p>The tradeoffs are real but narrow. Hermes has no equivalent of several Babel special cases, so a handful of array patterns get several times slower, and every array pattern costs about 31 bytes more bytecode. One configuration also breaks: dev builds with <code>enableBabelRuntime: false</code> crash in the preset's regenerator transform.</p>
+    </div>
+  </section>
+
+  <section id="tradeoffs">
+    <h2>Where removing the transform is a tradeoff</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Breaks</span><div><span class="t">Dev builds with <code>enableBabelRuntime: false</code> fail to compile generators and async functions that destructure</span><span class="b">With <code>dev: true</code>, the preset adds <code>@babel/plugin-transform-regenerator</code> itself when the runtime transform is off. Regenerator's hoisting expects destructuring to be lowered already, and throws <code>Property name expected type of string but got undefined</code> on e.g. <code>async function f(x) { const {a} = await x; }</code>. Reproduced with the 0.88 preset. Fix before landing: keep the destructuring transform whenever regenerator runs. (Separately, with the default runtime setting regenerator never runs in dev at all, contrary to the preset's comment.)</span></div></div>
+      <div class="tradeoff"><span class="sev high">5–11× slower</span><div><span class="t">Array patterns with an array-literal right-hand side</span><span class="b">Babel rewrites <code>const [a, b] = [x, y]</code> to <code>const a = x, b = y</code> with no array at all; Hermes allocates the array and runs the iterator protocol. Measured +439% to +1037% for declarations and multi-assignment, +125–215% for the <code>[a, b] = [b, a]</code> swap (Babel still allocates there but indexes directly). Absolute cost is ~90–130 ns per execution. Rare in practice: 0–13 such sites per app bundle (0.7–3.5% of array patterns), and only matters in hot loops such as sorting or shuffling.</span></div></div>
+      <div class="tradeoff"><span class="sev med">1.7–2.2× slower</span><div><span class="t">Destructuring <code>arguments</code> or a rest parameter</span><span class="b">Babel knows a rest parameter is an array and indexes it directly, and turns <code>arguments</code> into one <code>slice</code> call. Native goes through the generic iterator path. +69–115% (rest param), +78–79% (<code>arguments</code>). No occurrences in the four app bundles analysed.</span></div></div>
+      <div class="tradeoff"><span class="sev med">+16–18%</span><div><span class="t">Array rest from large arrays</span><span class="b"><code>const [a, ...rest] = arr</code> on a 1,000-element array: Babel's <code>toArray</code> + native <code>slice</code> beats Hermes copying element by element through the iterator. Small arrays (8 elements) are 21–27% faster natively, so the crossover sits somewhere in between.</span></div></div>
+      <div class="tradeoff"><span class="sev med">+31 B per site</span><div><span class="t">Bytecode size of array patterns</span><span class="b">A native two-element array pattern is 183 B vs 152 B lowered (+21%), because the iterator protocol, its done-checks and the iterator close are emitted inline instead of one helper call. Defaults and nesting grow it further (+83 B and +224 B). Object patterns are identical; object rest is 18 B smaller. Hermes' hidden <code>-Xenable-fast-destructure</code> flag, unused by RN, roughly halves the default/nesting overhead. Whole-bundle effect: -0.25% to +0.49% of HBC across the app bundles measured.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Neutral</span><div><span class="t">Everything else</span><span class="b">Object patterns without rest compile to identical bytecode (0.0% ± 1% in every case). Destructured function parameters, including <code>Component({title, ...rest})</code>, are <em>already</em> native today: the plugin only lowers declarations, assignments, <code>for…of</code> heads and <code>catch</code> clauses, and the preset doesn't run <code>transform-parameters</code>. Every micro case returned identical results in both forms. No open Hermes destructuring bugs; known fixes (async arrows with destructured params, iterator close on throw) are in 260318099.0.4.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Typical use, quantified</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>The test app is a small idiomatic React Native app: React Navigation bottom tabs, a FlatList feed of post cards (avatars, buttons, tags, action bars), and a settings screen, written with the usual hooks, props destructuring and object rest. A counting build wrapped the three Babel destructuring helpers to see how often real UI code hits them.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Phase</th><th>slicedToArray</th><th>objectWithoutProperties</th><th>toArray</th><th>Predicted saving, A16</th><th>Predicted saving, iPhone</th></tr></thead>
+      <tbody><tr><td style="font-family:var(--font-body)">Startup to first frame</td><td>775</td><td>613</td><td>40</td><td>1.23 ms</td><td>0.67 ms</td></tr><tr><td style="font-family:var(--font-body)">One theme change + one remount</td><td>1,282</td><td>1,147</td><td>80</td><td>2.28 ms</td><td>1.23 ms</td></tr></tbody>
+    </table></div>
+    <p class="note prose">Predicted savings multiply call counts by the per-call difference measured in the micro suite. For re-renders the measured saving (right-hand table below) is 2–3× the prediction; hot-loop microbenchmarks keep helper call sites monomorphic and cached, which real UI code doesn't, so they likely understate the helper cost. Startup savings of ~1 ms are below what 40 cold launches can resolve, which matches the null startup result.</p>
+    <div style="display:grid;gap:24px">
+      <div style="display:grid;gap:10px"><h3>Cold start (ms, median of 40 per variant)</h3><div class="scroll"><table><thead><tr><th>Metric</th><th>Device</th><th>Lowered</th><th>Native</th><th>Δ (95% CI)</th></tr></thead><tbody><tr><td>bundle start → first commit</td><td>A16</td><td>390.7</td><td>389.7</td><td class="">-1.0 (-0.3%)<br><span class="mono" style="color:var(--fg-3)">-6.8 … +6.2</span></td></tr><tr><td>bundle start → first commit</td><td>iPhone</td><td>79.5</td><td>80.7</td><td class="">+1.2 (+1.5%)<br><span class="mono" style="color:var(--fg-3)">-1.1 … +3.7</span></td></tr><tr><td>bundle start → first frame</td><td>A16</td><td>711.1</td><td>713.0</td><td class="">+2.0 (+0.3%)<br><span class="mono" style="color:var(--fg-3)">-11.5 … +11.4</span></td></tr><tr><td>bundle start → first frame</td><td>iPhone</td><td>105.0</td><td>105.2</td><td class="">+0.2 (+0.2%)<br><span class="mono" style="color:var(--fg-3)">-4.0 … +4.4</span></td></tr><tr><td>am start TotalTime</td><td>A16</td><td>295.5</td><td>297.0</td><td class="">+1.5 (+0.5%)<br><span class="mono" style="color:var(--fg-3)">-4.0 … +4.0</span></td></tr></tbody></table></div></div>
+      <div style="display:grid;gap:10px"><h3>Render (ms, median of 480 samples)</h3><div class="scroll"><table><thead><tr><th>Scenario</th><th>Device</th><th>Lowered</th><th>Native</th><th>Δ (95% CI)</th></tr></thead><tbody><tr><td>Theme change, 40 cards</td><td>A16</td><td>83.91</td><td>81.91</td><td class="pos">-2.00 (-2.4%)<br><span class="mono" style="color:var(--fg-3)">-2.95 … -0.38</span></td></tr><tr><td>Theme change, 40 cards</td><td>iPhone</td><td>33.46</td><td>32.75</td><td class="pos">-0.71 (-2.1%)<br><span class="mono" style="color:var(--fg-3)">-1.05 … -0.35</span></td></tr><tr><td>FlatList remount, 40 cards</td><td>A16</td><td>126.12</td><td>120.56</td><td class="pos">-5.56 (-4.4%)<br><span class="mono" style="color:var(--fg-3)">-6.70 … -4.34</span></td></tr><tr><td>FlatList remount, 40 cards</td><td>iPhone</td><td>38.39</td><td>36.65</td><td class="pos">-1.74 (-4.5%)<br><span class="mono" style="color:var(--fg-3)">-2.29 … -1.18</span></td></tr></tbody></table></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Pattern by pattern</h2>
+    <p class="prose">Native time as a multiple of lowered time, both compiled into the same release bundle and timed alternately in the same process (45 paired samples per case per device). Log scale; bars left of 1× mean native is faster. Cases where both forms compile identically are omitted here and listed in the table.</p>
+    <div class="legend"><span><i style="background:var(--faster)"></i>Native faster</span><span><i style="background:var(--slower)"></i>Native slower</span></div>
+    <div class="chart" id="chart" role="img" aria-label="Native vs lowered destructuring speed ratio per pattern on Android and iOS"></div>
+    <details>
+      <summary style="cursor:pointer;font-weight:500">All 46 cases as a table</summary>
+      <div class="scroll" style="margin-top:12px;max-height:70vh"><table id="micro-table"><thead><tr><th>Pattern</th><th>A16 lowered ns</th><th>A16 native ns</th><th>A16 Δ</th><th>iPhone lowered ns</th><th>iPhone native ns</th><th>iPhone Δ</th></tr></thead><tbody></tbody></table></div>
+    </details>
+  </section>
+
+  <section>
+    <h2>Bundle size in real apps</h2>
+    <p class="prose">Production bundles built both ways and compiled with the same <code>hermesc</code> RN 0.88 ships, using the release flags.</p>
+    <div class="scroll"><table><thead><tr><th>App</th><th>Platform</th><th>HBC lowered</th><th>HBC native</th><th>HBC Δ</th><th>HBC gzip Δ</th><th>JS Δ</th></tr></thead><tbody><tr><td style="font-family:var(--font-body)">RN 0.88 template</td><td>android</td><td>0.97 MB</td><td>0.96 MB</td><td class="pos">-2.4 KiB (-0.25%)</td><td>-0.7 KiB (-0.16%)</td><td>-1.66%</td></tr><tr><td style="font-family:var(--font-body)">RN 0.88 template</td><td>ios</td><td>0.96 MB</td><td>0.96 MB</td><td class="pos">-2.1 KiB (-0.22%)</td><td>-0.8 KiB (-0.18%)</td><td>-1.60%</td></tr><tr><td style="font-family:var(--font-body)">RNTester (RN main)</td><td>android</td><td>1.75 MB</td><td>1.76 MB</td><td class="neg">+7.8 KiB (+0.46%)</td><td>+3.6 KiB (+0.48%)</td><td>-2.31%</td></tr><tr><td style="font-family:var(--font-body)">RNTester (RN main)</td><td>ios</td><td>1.76 MB</td><td>1.77 MB</td><td class="neg">+8.4 KiB (+0.49%)</td><td>+4.0 KiB (+0.54%)</td><td>-2.27%</td></tr><tr><td style="font-family:var(--font-body)">Mattermost mobile</td><td>android</td><td>25.32 MB</td><td>25.34 MB</td><td class="neg">+25.0 KiB (+0.10%)</td><td>+37.2 KiB (+0.40%)</td><td>-0.89%</td></tr><tr><td style="font-family:var(--font-body)">Mattermost mobile</td><td>ios</td><td>25.09 MB</td><td>25.13 MB</td><td class="neg">+37.6 KiB (+0.15%)</td><td>+24.6 KiB (+0.27%)</td><td>-0.87%</td></tr><tr><td style="font-family:var(--font-body)">Bluesky social-app</td><td>android</td><td>31.01 MB</td><td>31.02 MB</td><td class="neg">+12.8 KiB (+0.04%)</td><td>+12.9 KiB (+0.13%)</td><td>-1.23%</td></tr><tr><td style="font-family:var(--font-body)">Bluesky social-app</td><td>ios</td><td>30.93 MB</td><td>30.97 MB</td><td class="neg">+37.9 KiB (+0.13%)</td><td>+27.9 KiB (+0.28%)</td><td>-1.18%</td></tr><tr><td style="font-family:var(--font-body)">Private Expo SDK 58 game app</td><td>android</td><td>5.29 MB</td><td>5.29 MB</td><td class="pos">-0.6 KiB (-0.01%)</td><td>+0.2 KiB (+0.01%)</td><td>-1.59%</td></tr><tr><td style="font-family:var(--font-body)">Private Expo SDK 58 game app</td><td>ios</td><td>5.09 MB</td><td>5.10 MB</td><td class="neg">+2.7 KiB (+0.06%)</td><td>+2.2 KiB (+0.10%)</td><td>-1.39%</td></tr></tbody></table></div><p class="note prose">JS shrinks in every app (no helper calls, shorter source), but bytecode moves with the ratio of array patterns, which grow, to object-rest patterns, which shrink. The template app has proportionally more object rest from React Native's own components, so its bytecode gets smaller. Mattermost (RN 0.83, Expo 55) builds with the legacy profile, whose preset already lowers parameters and object rest, so its row is a lower bound. The Expo apps use babel-preset-expo, which already omits the destructuring transform for Hermes V1; their A builds add it back.</p>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <ul class="tight">
+        <li><strong>Builds.</strong> One RN 0.88.0-rc.4 template app, built for release on both platforms (Hermes V1, release VM, no JIT, confirmed at runtime from <code>HermesInternal</code>). Variant A is the current default; variant B sets <code>unstable_preserveDestructuring</code>, which is what the PR makes the default.</li>
+        <li><strong>Micro suite.</strong> Each case is written once and compiled into the same bundle twice: verbatim, and pre-lowered with the preset's exact plugin options (<code>transform-destructuring</code> with <code>useBuiltIns</code>, helpers via <code>transform-runtime</code>). Both run in one process, alternating order per sample, each sample about 40 ms, 15 samples × 3 launches. Iteration counts are identical for both forms and results are compared for equality.</li>
+        <li><strong>Control.</strong> The same suite in a variant A build, where both copies end up lowered, shows 0.46% (A16) and 0.69% (iPhone) mean absolute difference. Seven parameter-destructuring cases, unaffected by the transform, sit within ±0.5% in every run.</li>
+        <li><strong>App A/B.</strong> Four interleaved rounds per device (ABBA order), each with 10 cold launches and 2 render runs per variant. Render runs time 60 theme changes and 60 FlatList remounts after 10 warm-up iterations. Startup marks come from Metro's <code>__BUNDLE_START_TIME__</code> and <code>performance.now()</code> at first commit and the following frame.</li>
+        <li><strong>Transform profile.</strong> RN 0.88.0-rc.4's <code>bundle</code> command still defaults <code>--unstable-transform-profile</code> to <code>default</code> (main switched to <code>hermes-stable</code> in #57911), and neither the Xcode nor the Gradle bundling step overrides it. So the on-device builds here lower classes in both variants. The destructuring toggle is independent of the profile and the micro suite contains no classes; the bundle-size rows for the template and RNTester use <code>hermes-stable</code>.</li>
+        <li><strong>Helper resolution.</strong> App code lowered by the preset imports Babel's CommonJS helpers. With Metro's inline requires, each lowered array destructure pays a <code>require()</code> call inside <code>slicedToArray</code>, which makes those helpers about 55% slower than their ESM copies (<code>helpers/esm/*</code>, resolved when code uses <code>import</code>). The lowered side of every comparison here uses the CommonJS helpers apps really get.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Before landing</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li>Keep <code>@babel/plugin-transform-destructuring</code> on whenever the preset adds the regenerator transform, or the dev + <code>enableBabelRuntime: false</code> configuration breaks.</li>
+        <li>Optionally keep Babel's array-literal special case with a tiny plugin, or ask Hermes to fold <code>[a, b] = [x, y]</code> and array-typed rest parameters in IRGen; the rest of the transform can go.</li>
+        <li>The bytecode cost is concentrated in array patterns; worth a look from the Hermes side (fast path for two- and three-element arrays) rather than a reason to keep the transform.</li>
+      </ul>
+    </div>
+  </section>
+  <section id="fast-destructure">
+    <h2>Follow-up: -Xenable-fast-destructure</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Hermes has a hidden compiler flag, <code>-Xenable-fast-destructure</code> (also implied by <code>-Xenable-fast-noncompliant</code>), described as "UNSUPPORTED: Enable a faster, but non-compliant, array destructuring". It was not benchmarked on device: its effect is narrow enough to be read from the compiler, and it does not touch any of the tradeoffs above.</p>
+      <p><strong>What it changes.</strong> In native array destructuring, Hermes wraps each store to a target, and each default initialiser, in a try/catch that closes the iterator if that step throws, as the spec requires. The flag drops those wrappers. Stores to plain local bindings can't throw, so a pattern like <code>const [value, setValue] = useState()</code> never had one and compiles identically with or without the flag. Only array patterns with defaults (<code>[a = f()]</code>), nested patterns and member-expression targets (<code>[obj.a, b] = pair</code>) change.</p>
+      <p><strong>Expected speed.</strong> No measurable change. Hermes implements try/catch with exception tables, so a try region costs nothing while nothing throws; the flag removes bytecode and handler entries, not work on the normal path. The array-pattern regressions above come from walking the iterator protocol where Babel indexes directly, which the flag leaves as it is.</p>
+      <p><strong>Size.</strong> The bundles with native destructuring, compiled again with the flag by RN 0.88's <code>hermesc</code>:</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Bundle</th><th>Native destructuring</th><th>With the flag</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr><td>RN 0.88 template</td><td>963,768 B</td><td>963,660 B</td><td>−108 B (−0.01%)</td></tr>
+        <tr><td>RNTester (RN main)</td><td>1,762,956 B</td><td>1,762,804 B</td><td>−152 B (−0.01%)</td></tr>
+        <tr><td>Mattermost mobile</td><td>25,341,228 B</td><td>25,328,212 B</td><td>−13,016 B (−0.05%)</td></tr>
+        <tr><td>Bluesky social-app</td><td>31,022,724 B</td><td>31,017,572 B</td><td>−5,152 B (−0.02%)</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>That recovers roughly a tenth of the 0.1–0.5% that native destructuring adds to bytecode.</p>
+      <p><strong>Compatibility.</strong> For arrays nothing observable changes, because array iterators have no <code>return()</code>. For generators and custom iterables it does: if a default initialiser or a target throws mid-pattern, <code>return()</code> is skipped, so a generator's <code>finally</code> cleanup does not run.</p>
+      <p><strong>Recommendation.</strong> Don't adopt it alongside this change. It would mean passing an unsupported, non-compliant flag in both the Xcode and Gradle bundling steps for a 0.01–0.05% bytecode saving and no expected runtime gain.</p>
+    </div>
+  </section>
+  <section id="bytecode-size">
+    <h2>Follow-up: where the bytecode size increase comes from</h2>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Almost all of it is the code Hermes emits inline for array destructuring, and most of that is per-element bookkeeping around the iterator rather than the iterator operations themselves. Object patterns compile to the same bytecode as Babel's output, and object rest is smaller.</p>
+      <p>Opcode-level differences between the two builds, release bytecode for Android:</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Instructions</th><th>RNTester</th><th>Mattermost</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">Added by native array destructuring</td></tr>
+        <tr><td>Mov (register copies)</td><td>+8.8 KB</td><td>+39.5 KB</td></tr>
+        <tr><td>JmpTrue (done and skip branches)</td><td>+4.2 KB</td><td>+20.6 KB</td></tr>
+        <tr><td>IteratorNext</td><td>+2.9 KB</td><td>+13.9 KB</td></tr>
+        <tr><td>StrictEq (done checks)</td><td>+2.9 KB</td><td>+13.8 KB</td></tr>
+        <tr><td>LoadConstUndefined (defaults)</td><td>+2.1 KB</td><td>+10.2 KB</td></tr>
+        <tr><td>IteratorBegin and IteratorClose</td><td>+2.2 KB</td><td>+10.2 KB</td></tr>
+        <tr class="group"><td colspan="3">Removed with Babel's helpers</td></tr>
+        <tr><td>Call2 and Call3 (helper calls)</td><td>−4.6 KB</td><td>−19.0 KB</td></tr>
+        <tr><td>GetByIndex (<code>_ref[0]</code>)</td><td>−3.9 KB</td><td>−18.1 KB</td></tr>
+        <tr><td>GetByIdShort (<code>.default</code>)</td><td>−2.7 KB</td><td>−9.1 KB</td></tr>
+        <tr><td>Helper access through the environment</td><td>−2.0 KB</td><td>−8.9 KB</td></tr>
+        <tr class="group"><td colspan="3">Total</td></tr>
+        <tr><td>Bytecode</td><td>+8.0 KB (+0.7%)</td><td>+33.7 KB (+0.3%)</td></tr>
+        <tr><td>Array destructuring patterns</td><td>373</td><td>1,663</td></tr>
+        <tr><td>Net per pattern</td><td>about +21 B</td><td>about +20 B</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>In Mattermost about 14 KB of object-literal instructions also switched between their long and short encodings as buffer offsets shifted; that is layout churn, not a destructuring cost. Strings, literal buffers and function counts are otherwise roughly neutral.</p>
+      <p>For <code>var [x, y] = a</code>, Hermes emits:</p>
+    </div>
+    <pre style="margin:0;background:var(--code-bg);padding:12px 14px;overflow-x:auto;font:0.82rem/1.5 var(--font-mono)">IteratorBegin r5, r6
+Mov r3, r6 ; IteratorNext r3, r5, r3 ; Mov r4, r5
+LoadConstUndefined r1 ; StrictEq r0, r4, r1          ; done?
+LoadConstUndefined r4 ; JmpTrue L1, r0 ; Mov r4, r3   ; value, or undefined when done
+L1: LoadConstUndefined r3 ; JmpTrue L2, r0            ; skip the next() once done
+IteratorNext r6, r5, r6 ; Mov r7, r5 ; StrictEq r2, r7, r1 ; …
+L2: JmpTrue L3, r0 ; IteratorClose r5, 0</pre>
+    <div class="prose" style="display:grid;gap:12px">
+      <p>Each element pays for a done check, a conditional default to <code>undefined</code>, a branch that skips later <code>next()</code> calls, and register copies, about 19 bytes against a 4-byte <code>IteratorNext</code>. <code>Mov</code> alone is 38% of the added bytes.</p>
+      <h3>Ways Hermes could claim it back</h3>
+      <ul class="tight">
+        <li><strong>Let iterator instructions handle exhaustion.</strong> Hermes already marks a finished iterator by setting its register to <code>undefined</code>. An <code>IteratorNext</code> variant that yields <code>undefined</code> from a finished iterator, and an <code>IteratorClose</code> that does nothing for one, would let the compiler drop the per-element check, branch and default: one 4-byte instruction per element. Estimated from the opcode counts, RNTester would add about 5 KB against the 13.8 KB removed, so native destructuring would come out smaller than Babel's output, with fewer branches on the normal path too. This needs a new opcode or a bytecode version bump.</li>
+        <li><strong>A fused array-destructure instruction.</strong> Something like <code>DestructureArray dst, count, src</code> could fill consecutive registers when the source is an array with the default iterator, which <code>IteratorBegin</code> already detects, and fall back to the generic sequence otherwise: about 5 bytes per pattern plus one per element.</li>
+        <li><strong>Fewer register copies.</strong> Many <code>Mov</code>s look like artefacts of lowering the iterator and done flag through stack slots; better coalescing after destructuring could remove some without new instructions.</li>
+        <li><strong>Babel's special cases, at compile time.</strong> When the right-hand side is an array literal, or a rest parameter that is known to be an array, Hermes could assign elements directly as Babel does. That would fix both the size and the 2–11× slowdowns <a href="#tradeoffs">above</a>.</li>
+      </ul>
+      <p class="note">The per-element saving and the RNTester estimate are derived from opcode counts and encodings, not from a prototype. Meta's increase scales with its number of array patterns and its own Babel configuration.</p>
+    </div>
+  </section>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const DATA = [{"case": "const {x, y} = obj", "group": "typical", "a": [47.9, 47.9, 1.0002, 0.996, 1.0029], "i": [24.7, 24.7, 1.0, 0.9991, 1.0006]}, {"case": "const {x, y, z, w} = obj", "group": "typical", "a": [58.7, 58.6, 0.9995, 0.9961, 1.0009], "i": [32.5, 32.4, 1.0002, 0.9956, 1.0021]}, {"case": "const {pos: {x, y}, meta: {id}} = obj", "group": "typical", "a": [68.6, 69.3, 1.0085, 1.0058, 1.0125], "i": [35.4, 35.4, 0.9994, 0.993, 1.0039]}, {"case": "const {x, q = 5} = obj (default)", "group": "typical", "a": [93.9, 91.9, 0.9788, 0.9764, 0.9808], "i": [49.5, 49.4, 1.0046, 0.9916, 1.013]}, {"case": "const {x, y} = obj (8 shapes)", "group": "typical", "a": [86.2, 86.7, 1.0049, 1.001, 1.0085], "i": [43.5, 43.5, 1.0006, 0.9995, 1.0022]}, {"case": "const {x, ...rest} = obj (4 keys)", "group": "typical", "a": [2187.6, 433.4, 0.198, 0.1963, 0.2036], "i": [1141.0, 198.6, 0.1874, 0.1844, 0.1885]}, {"case": "Component({title, subtitle, onPress, disabled = false})", "group": "control", "a": [116.9, 115.9, 0.9951, 0.9852, 1.0025], "i": [101.7, 101.7, 0.9999, 0.98, 1.0163]}, {"case": "Component({title, onPress, ...rest})", "group": "control", "a": [748.7, 749.0, 0.9984, 0.9927, 1.0044], "i": [416.5, 416.4, 1.0003, 0.998, 1.0028]}, {"case": "const [state, setState] = useState()", "group": "typical", "a": [323.4, 151.1, 0.4684, 0.4609, 0.4732], "i": [230.6, 126.0, 0.5503, 0.5471, 0.5528]}, {"case": "const {data, loading} = useQuery()", "group": "typical", "a": [21.5, 21.5, 1.0006, 0.9919, 1.0093], "i": [26.0, 26.0, 1.0, 0.9985, 1.001]}, {"case": "const [a, b] = pair", "group": "typical", "a": [287.9, 128.8, 0.4484, 0.4462, 0.4552], "i": [197.3, 106.1, 0.5528, 0.5473, 0.5578]}, {"case": "const [a, b] = arr (length 8)", "group": "typical", "a": [289.7, 130.7, 0.4525, 0.4507, 0.4599], "i": [198.0, 108.8, 0.552, 0.5444, 0.5561]}, {"case": "fn({x, y}) param", "group": "control", "a": [47.1, 47.1, 1.0005, 0.998, 1.0034], "i": [32.5, 32.5, 1.0001, 0.9829, 1.0328]}, {"case": "fn({x = 1, y = 2} = {}) param", "group": "control", "a": [89.0, 89.1, 0.999, 0.9939, 1.0069], "i": [74.6, 74.8, 1.0021, 0.9974, 1.0065]}, {"case": "items.map(({id, value}) => \u2026)", "group": "control", "a": [98.4, 98.6, 1.0009, 0.9915, 1.008], "i": [52.0, 51.8, 0.997, 0.9838, 1.0272]}, {"case": "for (const {x, y} of objs)", "group": "typical", "a": [32.2, 32.2, 0.9998, 0.9968, 1.0021], "i": [28.8, 28.2, 0.9892, 0.9805, 0.9971]}, {"case": "for (const [a, b] of pairs)", "group": "typical", "a": [281.8, 119.4, 0.4253, 0.4196, 0.4279], "i": [197.8, 98.2, 0.4941, 0.4932, 0.4975]}, {"case": "for (const [k, v] of Object.entries(obj64))", "group": "typical", "a": [454.3, 286.4, 0.6321, 0.6289, 0.6351], "i": [277.5, 181.5, 0.6528, 0.6473, 0.6579]}, {"case": "for (const [k, v] of map64)", "group": "typical", "a": [673.2, 446.1, 0.6614, 0.655, 0.6731], "i": [353.4, 252.2, 0.7131, 0.7087, 0.7244]}, {"case": "[a, b] = [b, a] (swap)", "group": "typical", "a": [67.1, 150.4, 2.2484, 2.218, 2.2753], "i": [34.3, 110.4, 3.1509, 2.9949, 3.272]}, {"case": "fn([a, b]) param", "group": "control", "a": [129.1, 128.8, 0.9978, 0.9958, 0.9997], "i": [106.2, 106.2, 1.0005, 0.9993, 1.0047]}, {"case": "const [a, , c] = arr (hole)", "group": "edge", "a": [290.4, 153.8, 0.5316, 0.5257, 0.5388], "i": [200.6, 130.7, 0.6561, 0.6459, 0.6629]}, {"case": "const [a, b = 7] = arr (default)", "group": "edge", "a": [333.4, 144.1, 0.4335, 0.4288, 0.4361], "i": [227.5, 120.9, 0.5305, 0.5241, 0.5339]}, {"case": "const [[a, b], [c, d]] = matrix", "group": "edge", "a": [833.4, 350.0, 0.4201, 0.4164, 0.425], "i": [562.0, 288.1, 0.5151, 0.5069, 0.5208]}, {"case": "const [a, ...rest] = arr (length 8)", "group": "edge", "a": [1812.5, 1188.4, 0.6576, 0.6494, 0.6726], "i": [1019.7, 807.4, 0.7933, 0.7803, 0.8063]}, {"case": "const [a, ...rest] = arr (length 1000)", "group": "edge", "a": [123608.2, 143853.4, 1.1627, 1.1527, 1.1869], "i": [77720.3, 91570.5, 1.1793, 1.1502, 1.2048]}, {"case": "const [first] = arr (length 10000)", "group": "edge", "a": [269.8, 79.9, 0.2973, 0.2933, 0.3028], "i": [191.3, 64.0, 0.338, 0.3357, 0.3393]}, {"case": "const [r, g, b] = Uint8Array", "group": "edge", "a": [1835.2, 1171.4, 0.6389, 0.6321, 0.6452], "i": [1092.7, 586.7, 0.534, 0.5256, 0.5411]}, {"case": "const [c0, c1] = string", "group": "edge", "a": [1610.2, 945.5, 0.5864, 0.5806, 0.5936], "i": [959.5, 484.3, 0.501, 0.4942, 0.5097]}, {"case": "const [a, b] = set", "group": "edge", "a": [1593.8, 946.8, 0.5908, 0.5827, 0.6164], "i": [931.4, 456.3, 0.4906, 0.4816, 0.4967]}, {"case": "const [a, b] = generator()", "group": "edge", "a": [2134.2, 1285.1, 0.6014, 0.5899, 0.6082], "i": [1295.1, 722.4, 0.5585, 0.5502, 0.5676]}, {"case": "const [a, b] = arguments", "group": "edge", "a": [638.1, 1141.0, 1.783, 1.7723, 1.8007], "i": [316.3, 564.6, 1.7936, 1.733, 1.8551]}, {"case": "const [a, b] = args (rest param)", "group": "edge", "a": [118.8, 201.0, 1.6894, 1.6806, 1.7093], "i": [64.5, 138.3, 2.1504, 2.0974, 2.2141]}, {"case": "const {k0, ...rest} = obj (50 keys)", "group": "edge", "a": [23517.5, 5328.3, 0.2273, 0.2231, 0.2317], "i": [12442.8, 2509.4, 0.2023, 0.199, 0.205]}, {"case": "const {k0\u2026k5, ...rest} = obj (50 keys)", "group": "edge", "a": [23354.5, 4759.7, 0.2033, 0.2006, 0.2064], "i": [12448.5, 2453.8, 0.1968, 0.1944, 0.1986]}, {"case": "const {[key]: v} = obj (computed)", "group": "edge", "a": [103.1, 103.2, 1.0012, 0.9987, 1.0038], "i": [60.0, 60.2, 1.0006, 0.9858, 1.0194]}, {"case": "const {a: {b: {c = 1} = {}} = {}} = obj", "group": "edge", "a": [186.6, 185.6, 0.9928, 0.9856, 1.0], "i": [108.8, 109.0, 0.9991, 0.9923, 1.0034]}, {"case": "({x, y} = obj) assignment", "group": "edge", "a": [47.1, 47.1, 1.0003, 0.998, 1.0022], "i": [32.5, 32.5, 1.0, 0.9993, 1.0008]}, {"case": "catch ({message})", "group": "edge", "a": [73.8, 73.7, 0.9974, 0.9959, 0.9988], "i": [50.4, 50.8, 1.0054, 0.991, 1.0157]}, {"case": "fn({x, y}) returning closure", "group": "control", "a": [47.1, 47.1, 1.0013, 0.9994, 1.0042], "i": [32.5, 32.5, 0.9999, 0.9967, 1.0009]}, {"case": "const [a, b] = [x, y] (literal)", "group": "edge", "a": [12.3, 140.2, 11.3709, 11.2852, 11.4818], "i": [16.8, 108.9, 6.768, 6.4757, 7.5105]}, {"case": "const [a, ...rest] = [x, y, z] (literal)", "group": "edge", "a": [54.5, 475.3, 8.6831, 8.4398, 8.9082], "i": [36.7, 316.2, 8.3781, 8.0388, 8.66]}, {"case": "const [v, u] = c ? [x, y] : [y, x] (ternary)", "group": "edge", "a": [352.3, 174.3, 0.4954, 0.4927, 0.5002], "i": [240.3, 138.5, 0.5783, 0.572, 0.5844]}, {"case": "let [a, b] = [x, y] then reassign (multi-assign)", "group": "edge", "a": [17.8, 145.6, 8.1678, 8.1115, 8.223], "i": [20.5, 110.1, 5.3858, 5.3736, 5.496]}, {"case": "baseline: o.x + o.y", "group": "baseline", "a": [47.1, 47.2, 1.0021, 1.0004, 1.0037], "i": [32.5, 32.5, 0.9996, 0.9888, 1.0012]}, {"case": "baseline: a[0] + a[1]", "group": "baseline", "a": [50.8, 50.8, 1.0, 0.9983, 1.0022], "i": [33.4, 33.4, 1.0, 0.9989, 1.0054]}];
+const fmtPct = r => { const p = (r - 1) * 100; return (p > 0 ? '+' : '') + p.toFixed(1) + '%'; };
+const fmtX = r => r >= 1 ? r.toFixed(2) + '× slower' : (1 / r).toFixed(2) + '× faster';
+
+// Chart: log2 ratio scale, 0.25× … 12×.
+const MIN = Math.log2(0.25), MAX = Math.log2(12);
+const W = 100;
+const x = r => ((Math.log2(Math.min(Math.max(r, 0.25), 12)) - MIN) / (MAX - MIN)) * W;
+const TICKS = [0.25, 0.5, 1, 2, 4, 8];
+const NS = 'http://www.w3.org/2000/svg';
+const svg = (h) => { const s = document.createElementNS(NS, 'svg'); s.setAttribute('viewBox', `0 0 ${W} ${h}`); s.setAttribute('preserveAspectRatio', 'none'); return s; };
+const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent.appendChild(n); return n; };
+
+const chart = document.getElementById('chart');
+const tip = document.getElementById('tip');
+const head = document.createElement('div');
+head.className = 'chart-head';
+head.innerHTML = '<span></span>';
+for (const plat of ['Galaxy A16 (Android)', 'iPhone 12 mini (iOS)']) {
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `<div class="plat">${plat}</div>`;
+  const axis = document.createElement('div');
+  axis.className = 'axis';
+  for (const t of TICKS) {
+    const span = document.createElement('span');
+    span.textContent = t + '×';
+    span.style.left = x(t) + '%';
+    if (t === TICKS[0]) span.style.transform = 'none';
+    axis.appendChild(span);
+  }
+  wrap.appendChild(axis);
+  head.appendChild(wrap);
+}
+chart.appendChild(head);
+
+const shown = DATA.filter(d => (d.group === 'typical' || d.group === 'edge') && (Math.abs(d.a[2] - 1) > 0.03 || Math.abs(d.i[2] - 1) > 0.03))
+  .sort((p, q) => (p.a[2] + p.i[2]) - (q.a[2] + q.i[2]));
+for (const d of shown) {
+  const row = document.createElement('div');
+  row.className = 'chart-row';
+  const lbl = document.createElement('div');
+  lbl.className = 'lbl';
+  lbl.textContent = d.case;
+  row.appendChild(lbl);
+  for (const [key, plat] of [['a', 'Galaxy A16'], ['i', 'iPhone 12 mini']]) {
+    const [lo, na, r] = d[key];
+    const s = svg(22);
+    for (const t of TICKS) el('line', {x1: x(t), x2: x(t), y1: 0, y2: 22, class: t === 1 ? 'one' : 'tick', 'vector-effect': 'non-scaling-stroke'}, s);
+    const x0 = x(1), x1 = x(r);
+    el('rect', {x: Math.min(x0, x1), y: 6, width: Math.max(Math.abs(x1 - x0), 0.4), height: 10, rx: 0.8, class: r < 1 ? 'bar-f' : 'bar-s'}, s);
+    const hit = el('rect', {x: 0, y: 0, width: W, height: 22, class: 'hit'}, s);
+    const show = e => {
+      tip.hidden = false;
+      tip.innerHTML = `<b>${plat}</b><br>${d.case}<br>lowered ${lo.toFixed(1)} ns · native ${na.toFixed(1)} ns<br>${fmtPct(r)} (${fmtX(r)})`;
+      const px = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8);
+      tip.style.left = px + 'px';
+      tip.style.top = (e.clientY + 14) + 'px';
+    };
+    hit.addEventListener('mousemove', show);
+    hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+    s.setAttribute('aria-label', `${plat}: ${fmtPct(r)}`);
+    row.appendChild(s);
+  }
+  chart.appendChild(row);
+}
+
+const GROUPS = {typical: 'Typical patterns', edge: 'Edge cases', control: 'Controls (parameters, unaffected by the transform)', baseline: 'Baselines (no destructuring)'};
+const tbody = document.querySelector('#micro-table tbody');
+for (const g of Object.keys(GROUPS)) {
+  tbody.insertAdjacentHTML('beforeend', `<tr class="group"><td colspan="7">${GROUPS[g]}</td></tr>`);
+  for (const d of DATA.filter(r => r.group === g)) {
+    const cell = r => `<td class="${r < 0.97 ? 'pos' : r > 1.03 ? 'neg' : ''}">${fmtPct(r)}</td>`;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td></td><td>${d.a[0].toFixed(1)}</td><td>${d.a[1].toFixed(1)}</td>${cell(d.a[2])}<td>${d.i[0].toFixed(1)}</td><td>${d.i[1].toFixed(1)}</td>${cell(d.i[2])}`;
+    tr.firstChild.textContent = d.case;
+    tbody.appendChild(tr);
+  }
+}
+</script>
+</body>
+</html>

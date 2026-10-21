@@ -3,102 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<style>
-  :root { color-scheme: light; padding-top: env(safe-area-inset-top, 0px); padding-bottom: env(safe-area-inset-bottom, 0px); }
-  body { margin: 0; font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  img { max-width: 100%; }
-  [hidden] { display: none !important; }
-</style>
-<title>Dropping graceful-fs</title>
+<title>Dropping graceful-fs from Metro</title>
+<meta name="description" content="Safety review of react/metro#1676: what Metro loses without graceful-fs, checked against its source and stress-tested under a 256-fd hard limit.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
-<style>
-/* Layout: single reading column (~72ch) with full-width data blocks that scroll inside their own frames. */
-:root {
-  --bg: #fbfbfa;
-  --surface: #f2f2ef;
-  --fg: #16181c;
-  --fg-2: #4d5159;
-  --fg-3: #7a7e86;
-  --rule: #dddcd6;
-  --accent: #2a5fa8;
-  --faster: #2a78d6;
-  --slower: #e34948;
-  --code-bg: #eeede8;
-  --font-display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
-  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
-    --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #141517; --surface: #1c1d20; --fg: #ecebe6; --fg-2: #b9b9b2; --fg-3: #8b8c88; --rule: #2e3034;
-  --accent: #7fb0f0; --faster: #3987e5; --slower: #e66767; --code-bg: #232428; color-scheme: dark;
-}
-* { box-sizing: border-box; }
-body { background: var(--bg); color: var(--fg); font: 16px/1.6 var(--font-body); }
-.page { max-width: 1040px; margin: 0 auto; padding-inline: 16px; padding-block: 40px 80px; display: grid; gap: 56px; }
-.prose { max-width: 72ch; }
-h1, h2, h3 { font-family: var(--font-display); font-weight: 600; line-height: 1.15; text-wrap: balance; margin: 0; }
-h1 { font-size: clamp(2rem, 4.5vw, 2.9rem); letter-spacing: -0.01em; }
-h2 { font-size: 1.6rem; }
-h3 { font-size: 1.15rem; }
-p { margin: 0; }
-section { display: grid; gap: 18px; min-width: 0; }
-.eyebrow { font: 500 0.75rem/1 var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-3); }
-.lede { font-size: 1.15rem; color: var(--fg-2); max-width: 68ch; }
-code, .mono { font-family: var(--font-mono); font-size: 0.88em; }
-code { background: var(--code-bg); padding: 0.1em 0.35em; border-radius: 3px; overflow-wrap: anywhere; }
-a { color: var(--accent); }
-.meta { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--fg-3); font-size: 0.9rem; }
-.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
-.verdict > div { background: var(--bg); padding: 18px 18px 20px; display: grid; gap: 6px; align-content: start; min-width: 0; }
-.verdict .k { font: 500 0.72rem/1.2 var(--font-mono); letter-spacing: 0.07em; text-transform: uppercase; color: var(--fg-3); }
-.verdict .v { font: 600 1.7rem/1.1 var(--font-display); font-variant-numeric: tabular-nums; }
-.verdict .d { color: var(--fg-2); font-size: 0.92rem; }
-.pos { color: var(--faster); }
-.neg { color: var(--slower); }
-ul.tight { margin: 0; padding-left: 1.2em; display: grid; gap: 8px; }
-.tradeoffs { display: grid; gap: 0; border-top: 1px solid var(--rule); }
-.tradeoff { display: grid; grid-template-columns: 7.5rem 1fr; gap: 16px; padding: 16px 0; border-bottom: 1px solid var(--rule); }
-.tradeoff .sev { font: 500 0.72rem/1.4 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase; padding-top: 3px; }
-.sev.high { color: var(--slower); }
-.sev.low { color: var(--fg-3); }
-.sev.med { color: var(--fg-2); }
-.tradeoff > div { min-width: 0; display: grid; gap: 6px; }
-.tradeoff .t { font-weight: 600; }
-.tradeoff .b { color: var(--fg-2); font-size: 0.95rem; }
-.scroll { overflow-x: auto; border: 1px solid var(--rule); }
-table { border-collapse: collapse; width: 100%; font-size: 0.88rem; font-variant-numeric: tabular-nums; }
-th, td { padding: 7px 12px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
-th { font: 500 0.72rem/1.3 var(--font-mono); letter-spacing: 0.05em; text-transform: uppercase; color: var(--fg-3); background: var(--surface); }
-th:first-child, td:first-child { text-align: left; }
-td:first-child { font-family: var(--font-mono); font-size: 0.82rem; white-space: normal; min-width: 14rem; }
-td.l, th.l { text-align: left; white-space: normal; min-width: 16rem; }
-tr.group td { background: var(--surface); font: 600 0.78rem/1.3 var(--font-body); color: var(--fg-2); }
-.note { color: var(--fg-2); font-size: 0.92rem; }
-.grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; }
-.grid2 > * { min-width: 0; }
-pre { margin: 0; background: var(--code-bg); padding: 12px 14px; overflow-x: auto; font: 0.82rem/1.5 var(--font-mono); }
-details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
-details[open] summary { margin-bottom: 10px; }
-@media (max-width: 640px) {
-  .tradeoff { grid-template-columns: 1fr; gap: 4px; }
-}
-</style>
+<link rel="stylesheet" href="../assets/report.css">
 </head>
 <body>
 <main class="page">
-  <header style="display:grid;gap:16px">
+  <header>
     <div class="eyebrow">react/metro #1676 · safety review</div>
     <h1>Dropping graceful-fs from Metro</h1>
     <p class="lede">What <code>metro</code> and <code>metro-file-map</code> lose when <code>graceful-fs</code> is replaced with plain <code>node:fs</code>, checked against graceful-fs' source and measured under a 256-fd hard limit.</p>
     <div class="meta">
-      <span>PR head <span class="mono">d5ca710</span> (main <span class="mono">5abdbc0</span> merged in)</span><span>graceful-fs 4.2.11</span><span>Node 26.11.1, macOS</span><span>Reviewed 2026-10-18</span>
+      <span>PR head <span class="mono">d5ca710</span> (main <span class="mono">5abdbc0</span> merged in)</span><span>graceful-fs 4.2.11</span><span>Node 26.11.1, macOS</span><span>Reviewed 2026-10-18</span><span><a href="#revisions">Published 2026-10-18</a></span>
     </div>
   </header>
 
@@ -110,7 +28,7 @@ details[open] summary { margin-bottom: 10px; }
       <div><span class="k">Crawl with ≤2 fds free</span><span class="v neg">28 of 30,683</span><span class="d">The only way to make the crawler fail is a process already out of fds. Directories are then skipped with a warning.</span></div>
       <div><span class="k">In production</span><span class="v pos">5 months</span><span class="d">Expo's <code>metro-file-map</code> fork dropped graceful-fs in SDK 56 and uses the Node crawler by default. No EMFILE crawl reports since.</span></div>
     </div>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>graceful-fs was added to Metro's predecessor in 2015 because the packager "uses as much concurrency as possible" and kept running out of file descriptors under a low <code>ulimit</code>. Metro no longer works that way. The crawler's <code>readdir</code> and <code>lstat</code> don't keep any file open between calls, so the crawler never has more than <code>UV_THREADPOOL_SIZE</code> (default 4) fds open at once, however large the tree. Every other graceful-fs feature (the Windows <code>rename</code> retry, the <code>chmod</code>/<code>chown</code> fixes, the polyfills) patches calls Metro never makes.</p>
       <p>Two edge cases remain, both in processes that are already almost out of file descriptors. In that state a crawl now skips directories instead of retrying, and a source request returns 500 instead of waiting. Neither is plausible at normal limits. The server case is also failing either way, because each connection uses an fd too.</p>
     </div>
@@ -144,7 +62,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>Why the crawler can't run out of file descriptors</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>The Node crawler recurses with no concurrency limit of its own: every directory it sees issues a <code>readdir</code> straight away, and every matching file an <code>lstat</code>. A crawl of 2.3M files had about 75,000 <code>readdir</code> calls pending at its peak. None of them holds an fd while it waits. On macOS and Linux, libuv runs each <code>readdir</code> as one <code>scandir(3)</code> on a threadpool thread, which opens, reads and closes the directory in one job. On Windows it uses <code>CreateFileW</code> and <code>NtQueryDirectoryFile</code> on a handle and never allocates a C runtime fd. <code>lstat</code> needs no fd at all. Open fds are therefore bounded by the threadpool size (4 unless <code>UV_THREADPOOL_SIZE</code> is set), not by the size of the tree.</p>
       <p>The 2015 failure mode also needs a low <em>hard</em> limit. Node raises its soft <code>RLIMIT_NOFILE</code> to the hard limit at startup, so <code>ulimit -n 256</code> on its own has no effect: the test process still opened 92,149 fds (macOS's <code>kern.maxfilesperproc</code>). Everything below was run with <code>ulimit -Sn 256; ulimit -Hn 256</code>.</p>
     </div>
@@ -204,7 +122,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>The merge</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>The PR was six months behind main and conflicted with three crawler and test changes (#1677, #1693, #1937). Merge commit <span class="mono">d5ca710</span> brings it up to main <span class="mono">5abdbc0</span> and makes three changes beyond resolving those conflicts:</p>
       <ul class="tight">
         <li><code>node:fs</code> everywhere, as in the rest of Metro and as main's lint rule <code>import/enforce-node-protocol-usage</code> requires. The crawler and <code>Server.js</code> use the default import.</li>
@@ -228,7 +146,7 @@ details[open] summary { margin-bottom: 10px; }
 
   <section>
     <h2>Method</h2>
-    <div class="prose" style="display:grid;gap:12px">
+    <div class="prose stack">
       <p>The graceful-fs behavior table comes from reading 4.2.11's <code>graceful-fs.js</code> and <code>polyfills.js</code>, the version <code>yarn.lock</code> resolves for <code>^4.2.4</code>. The libuv claims come from <code>src/unix/fs.c</code> and <code>src/win/fs.c</code>, and the Node soft-limit behavior from <code>PlatformInit</code> in <code>src/node.cc</code>, confirmed by opening files until <code>EMFILE</code>. The 2.3M-file tree is a directory of about 75 repository checkouts, mostly JavaScript, many with <code>node_modules</code> installed. The 30,683-file tree is one Metro checkout. Windows wasn't stress-tested: there <code>readdir</code> uses no C runtime fd, and the PR's CI was green on Windows before the merge.</p>
     </div>
     <details class="prose">
@@ -279,6 +197,17 @@ new Promise(resolve =&gt; {
   search(root);
 }).then(() =&gt; console.log(JSON.stringify({which, files, errors})));</pre>
     </details>
+  </section>
+
+  <section id="revisions">
+    <h2>Revisions</h2>
+    <div class="scroll"><table class="revisions">
+      <thead><tr><th>Revision</th><th>Date</th><th class="l">Change</th></tr></thead>
+      <tbody>
+        <tr><td><a href="v/1/">1</a></td><td>2026-10-18</td><td class="l">First published.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Each revision links to a frozen copy of the report as it was published. The <a href="https://github.com/robhogan/reports/commits/main/metro-1676-safety-review">commit history</a> has every edit.</p>
   </section>
 </main>
 </body>
