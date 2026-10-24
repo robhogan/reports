@@ -13,6 +13,19 @@
     ]
   },
   {
+    "slug": "metro-transformer-performance",
+    "title": "Where Metro's transformer spends a cold build",
+    "description": "Cold-build profile of Metro's transform pipeline on Mattermost mobile: worker scaling and IPC, Babel config and per-plugin costs, the main thread, and three fixes that cut CPU 8–15% with identical output.",
+    "date": "2026-10-24",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-24",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "react-native-58965-destructuring",
     "title": "Native destructuring on Hermes V1",
     "description": "On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.",

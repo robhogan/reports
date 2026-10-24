@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Where Metro&#x27;s transformer spends a cold build</title>
+<meta name="description" content="Cold-build profile of Metro&#x27;s transform pipeline on Mattermost mobile: worker scaling and IPC, Babel config and per-plugin costs, the main thread, and three fixes that cut CPU 8–15% with identical output.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+<style>
+td.sans, th.sans { font-family: var(--font-body); }
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-10-24. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">metro · investigation</div>
+    <h1>Where Metro's transformer spends a cold build</h1>
+    <p class="lede">Where the time goes when Metro transforms a large React Native app from an empty cache, and how well that work parallelises, measured by instrumenting every stage from the main thread through worker IPC to individual Babel plugins in a cold build of Mattermost mobile.</p>
+    <div class="meta">
+      <span>Mattermost mobile <span class="mono">ad6b834</span></span><span>Metro 0.87.1</span><span>React Native 0.83.9</span><span>@babel/core 7.29.0</span><span>Node 26.11.1, macOS, M4 Pro (8P + 4E)</span><span>Measured 2026-10-24</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Parallel speedup</span><span class="v neg">3.6× at best</span><span class="d">Reached at 6 workers. The default of 8 is no faster and uses 12% more CPU; 10–12 workers are slower still.</span></div>
+      <div><span class="k">Worker utilisation</span><span class="v neg">83%</span><span class="d">At 8 workers, with 800–1,270 jobs queued. The idle 17% is IPC turnaround, which grows with worker count.</span></div>
+      <div><span class="k">Babel config loading</span><span class="v neg">15% of worker CPU</span><span class="d">React Native's Babel transformer loads the full config twice for every file.</span></div>
+      <div><span class="k">Three small fixes</span><span class="v pos">−8 to −15% CPU</span><span class="d">Up to 11% faster cold builds, with byte-identical bundles. One is already open as react/metro#2034.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>A cold build is bound by worker CPU, but parallelism stops paying off at 6 workers on this 12-core machine. Graph discovery is never the limit: within 1.5 s of the first transform there are hundreds of jobs queued. Past 6 workers, each job just gets slower (median 5.0 ms at 4 workers, 6.9 ms at 8, 9.8 ms at 12) and the hand-off between jobs gets longer. In worker CPU, Babel plugin visitors take about a third, Metro's own passes about 31%, and loading the Babel config 15%, because the config is loaded once for parsing and again for transforming.</p>
+      <p>Three changes cut cold-build CPU by 8–15% without changing a byte of output. They are: stop deep-cloning each AST in Metro's main Babel pass (<a href="https://github.com/react/metro/pull/2034">react/metro#2034</a>), load the Babel config once per file, and read files for the lazy SHA-1 off the main thread. The measurements also turned up a correctness bug: with <code>transformer.unstable_workerThreads</code>, Babel plugins can inline <code>JEST_WORKER_ID</code> into a release bundle.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Where the wall time goes</h2>
+    <p class="prose">A cold release build takes 18.7 s, and 15.4 s of that is the transform window. The remaining 3.3 s is serial: the file map before the first transform, worker start-up, and writing the bundle at the end.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Phase</th><th>Time</th><th class="l">Notes</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Config and file map, until the dependency graph is ready</td><td>2.33 s</td><td class="l">Not transformer work. About 1.7 s of it is one regular expression (see <a href="#blocklist">below</a>).</td></tr>
+        <tr><td class="sans">Worker start-up, until every worker is running a job</td><td>+0.55 s</td><td class="l"><code>Bundler</code> only creates the <code>Transformer</code>, and so forks the workers, after <code>DependencyGraph.ready()</code> resolves. Worker start-up never overlaps the crawl.</td></tr>
+        <tr><td class="sans">Transform window, first to last transform</td><td>15.4 s</td><td class="l">8 workers, 83% busy on average.</td></tr>
+        <tr><td class="sans">Serialise and write the bundle</td><td>0.9 s</td><td class="l">52 MB unminified.</td></tr>
+        <tr><td class="sans"><strong>Total</strong></td><td><strong>18.7 s</strong></td><td class="l">7,082 modules.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">One instrumented cold release build at the default 8 workers. Each worker's first job takes 270–900 ms (requires, JIT warm-up and the first config load). The first 10% of each worker's jobs average 26 ms against about 10 ms for its last half, so every extra worker repeats that warm-up.</p>
+  </section>
+
+  <section>
+    <h2>How well it parallelises</h2>
+    <p class="prose">Speedup peaks at 3.6× with 6 workers. Metro's default formula picks 8 workers on this machine because <code>os.availableParallelism()</code> counts all 12 cores, including the 4 efficiency cores. Beyond 6 workers, wall time stays flat or gets worse, while total CPU keeps climbing.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Workers</th><th>Build</th><th>Speedup</th><th>Efficiency</th><th>CPU, user + sys</th></tr></thead>
+      <tbody>
+        <tr><td>1 (in-band, no IPC)</td><td>66.0 s</td><td>1.00×</td><td>100%</td><td>82 s</td></tr>
+        <tr><td>2</td><td>35.8 s</td><td>1.84×</td><td>92%</td><td>89 s</td></tr>
+        <tr><td>4</td><td>21.6 s</td><td>3.06×</td><td>76%</td><td>100 s</td></tr>
+        <tr><td>6</td><td>18.3 s</td><td class="pos">3.59×</td><td>60%</td><td>119 s</td></tr>
+        <tr><td>8 (default)</td><td>18.9 s</td><td>3.48×</td><td>44%</td><td>134 s</td></tr>
+        <tr><td>10</td><td>19.9 s</td><td>3.31×</td><td>33%</td><td>141 s</td></tr>
+        <tr><td>12</td><td>19.7 s</td><td>3.35×</td><td>28%</td><td>147 s</td></tr>
+        <tr><td>8, worker threads</td><td>18.2 s</td><td>3.63×</td><td>45%</td><td>136 s</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Cold release builds, uninstrumented, mean of 2 runs each. CPU covers the main process and all workers.</p>
+
+    <div style="display:grid;gap:10px"><h3>Why more workers don't help</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Workers</th><th>Σ compute</th><th>Median job</th><th>Busy</th><th>Σ idle gaps</th><th>Gap p90 / p99</th><th>Main busy</th></tr></thead>
+      <tbody>
+        <tr><td>4</td><td>68.9 s</td><td>5.0 ms</td><td>92%</td><td>4.7 s</td><td>1.6 / 6.5 ms</td><td>22%</td></tr>
+        <tr><td>8</td><td>102.8 s</td><td>6.9 ms</td><td>83%</td><td>16.2 s</td><td>4.8 / 18.2 ms</td><td>52%</td></tr>
+        <tr><td>12</td><td>163.4 s</td><td>9.8 ms</td><td>80%</td><td>35.3 s</td><td>11.8 / 34.5 ms</td><td>55%</td></tr>
+      </tbody>
+    </table></div></div>
+    <div class="prose stack">
+      <p>The same 7,085 jobs cost 1.5× more CPU at 8 workers than at 4, and 2.4× more at 12. Each job also waits longer to start. At 8 workers, the main thread and the workers already outnumber the 8 performance cores, before counting V8's GC and compiler threads. Workers that land on efficiency cores or contend for memory bandwidth run slower, and a worker that has finished a job waits longer to be scheduled for the next. This explanation is an inference: it fits the core counts and the fact that both costs rise together, but per-core scheduling wasn't traced.</p>
+      <p><strong>The dependency graph never starves the workers.</strong> More than 100 jobs are queued by 3.5 s into the build, and 800–1,270 from 5.5 s to 14.75 s. The median job waits 1.8 s in jest-worker's queue before it is sent. Only about 0.5 s of the transform window has fewer jobs in flight than workers, at the start and the very end.</p>
+    </div>
+
+    <div style="display:grid;gap:10px"><h3>Worker IPC</h3>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Measure</th><th>Value</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Bytes sent to workers</td><td>56.8 MB</td></tr>
+        <tr><td class="sans">… of which source text</td><td>45.9 MB</td></tr>
+        <tr><td class="sans">… of which config and options, about 1.5 KB per job</td><td>10.9 MB</td></tr>
+        <tr><td class="sans">Bytes returned</td><td>120.7 MB (p50 5.3 KB, max 2.3 MB)</td></tr>
+        <tr><td class="sans">Main thread CPU to send / receive</td><td>0.85 s / 0.74 s</td></tr>
+        <tr><td class="sans">Worker CPU to serialise replies</td><td>0.35 s</td></tr>
+        <tr><td class="sans">Latency main → worker</td><td>p50 0.3 ms, p90 2.3 ms, p99 10.6 ms</td></tr>
+        <tr><td class="sans">Latency worker → main</td><td>p50 0.2 ms, p90 2.5 ms, p99 16.3 ms</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">One cold release build at 8 workers. Sizes are of the v8-serialised messages (jest-worker child processes use <code>serialization: 'advanced'</code> over a pipe). Each job is one call with one job in flight per worker. The request carries the file name, transform options, project root and the full transformer config, which is identical on every call, plus the source buffer. The main thread already read that source to compute the file's SHA-1. Serialisation itself is cheap; the latency tail grows with worker count, as in the table above.</p>
+  </section>
+
+  <section>
+    <h2>Where worker CPU goes</h2>
+    <p class="prose">Two-thirds of worker time is spent inside React Native's Babel transformer running the app's own config: loading that config twice (15%), parsing (8%), and the plugins (about 39% including Babel's traversal overhead). Metro's own work after that is about 31%, and the largest single piece is a deep clone of every AST.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Stage</th><th>Time</th><th>Share</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">React Native Babel transformer (app config)</td></tr>
+        <tr><td class="sans">Config load in <code>parseSync</code></td><td>11.2 s</td><td class="neg">10.9%</td></tr>
+        <tr><td class="sans">Config load again in <code>transformFromAstSync</code></td><td>4.6 s</td><td class="neg">4.5%</td></tr>
+        <tr><td class="sans">Parse (Babel, or Hermes parser for Flow files)</td><td>8.0 s</td><td>7.8%</td></tr>
+        <tr><td class="sans"><code>File</code> set-up and program scope crawl</td><td>6.2 s</td><td>6.0%</td></tr>
+        <tr><td class="sans">Plugin <code>pre()</code> hooks (1.7 s is Metro's function-map plugin, which runs its own full traversal)</td><td>3.2 s</td><td>3.1%</td></tr>
+        <tr><td class="sans">Plugin visitors (table below)</td><td></td><td>32.1%</td></tr>
+        <tr><td class="sans">Babel traversal overhead outside visitors</td><td></td><td>6.7%</td></tr>
+        <tr class="group"><td colspan="3">Metro</td></tr>
+        <tr><td class="sans">Inline pass: deep clone of the AST, new <code>File</code> and scope crawl</td><td>9.7 s</td><td class="neg">9.5%</td></tr>
+        <tr><td class="sans">Inline pass: <code>inline-requires</code> and <code>inline</code> visitors, traversal, config</td><td>7.5 s</td><td>7.2%</td></tr>
+        <tr><td class="sans">Constant folding (release builds only)</td><td>6.8 s</td><td>6.6%</td></tr>
+        <tr><td class="sans"><code>@babel/generator</code></td><td>3.1 s</td><td>3.1%</td></tr>
+        <tr><td class="sans"><code>collectDependencies</code></td><td>2.0 s</td><td>2.0%</td></tr>
+        <tr><td class="sans">Source map encoding</td><td>0.6 s</td><td>0.6%</td></tr>
+        <tr><td class="sans">Module wrapping, SHA-1, glue</td><td>1.5 s</td><td>1.5%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Cold release build at 8 workers; Σ worker time 102.8 s. Plugin visitor shares come from a second run that wrapped every visitor with Babel's <code>wrapPluginVisitorMethod</code> (exclusive time, 4% overhead, Σ 107.4 s) and are shares of that run. CPU profiles put garbage collection at 11% of worker CPU, spread across these rows. Dev builds have the same shape, except that constant folding doesn't run and <code>transform-react-jsx/development</code> adds 1.1%.</p>
+
+    <div class="prose stack">
+      <p><strong>Config loading is a flat per-file cost.</strong> It runs at about 1.0 ms in <code>parseSync</code> and 0.6 ms in <code>transformFromAstSync</code> for every file, steady from the start of the build to the end, so it isn't a cache that degrades. CPU profiles split it three ways. Over half is Babel's config-chain walk: <code>overrides</code> and <code>include</code> matching, and the <code>package.json</code> lookups that decide where <code>.babelrc</code> files apply. About a quarter is plugin descriptors, whose cache checks stat files on every load; <code>react-native-dotenv</code>'s <code>.env</code> check alone is 0.9 s. Most of the rest is presets.</p>
+    </div>
+
+    <div style="display:grid;gap:10px"><h3>Babel plugins</h3>
+    <div class="scroll"><table>
+      <thead><tr><th>Plugin</th><th>Worker CPU</th><th>Visitor calls</th><th class="l">Comes from</th></tr></thead>
+      <tbody>
+        <tr><td>module-resolver</td><td class="neg">6.8%</td><td>14k</td><td class="l">App config. Resolves every import with synchronous file system lookups.</td></tr>
+        <tr><td>transform-modules-commonjs</td><td>4.2%</td><td>511k</td><td class="l">Preset</td></tr>
+        <tr><td>inline-requires</td><td>3.8%</td><td>14k</td><td class="l">Metro</td></tr>
+        <tr><td>react-native-worklets/plugin</td><td>3.4%</td><td>1.25M</td><td class="l">Reanimated</td></tr>
+        <tr><td>constant folding</td><td>3.1%</td><td>149k</td><td class="l">Metro, release only</td></tr>
+        <tr><td>transform-runtime</td><td>2.3%</td><td>5.0M</td><td class="l">App config</td></tr>
+        <tr><td>transform-block-scoping</td><td>2.1%</td><td>414k</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-destructuring</td><td>2.0%</td><td>239k</td><td class="l">React Native preset</td></tr>
+        <tr><td>function map, in <code>pre()</code></td><td>1.6%</td><td></td><td class="l">Metro</td></tr>
+        <tr><td>transform-async-generator-functions</td><td>1.2%</td><td>7k</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-classes</td><td>0.9%</td><td>4k</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-function-name</td><td>0.9%</td><td>615k</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-parameters</td><td>0.9%</td><td>69k</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-typescript</td><td>0.7%</td><td>3.1M</td><td class="l">App config</td></tr>
+        <tr><td>transform-object-rest-spread</td><td>0.7%</td><td>1.0M</td><td class="l">React Native preset</td></tr>
+        <tr><td>transform-arrow-functions</td><td>0.7%</td><td>18k</td><td class="l">React Native preset</td></tr>
+        <tr><td>formatjs</td><td>0.6%</td><td>124k</td><td class="l">App config</td></tr>
+        <tr><td>proposal-decorators</td><td>0.6%</td><td>1.0M</td><td class="l">App config</td></tr>
+        <tr><td>about 40 others</td><td>about 2%</td><td></td><td class="l"></td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">Exclusive visitor time, cold release build. The React Native preset's ES2015-era transforms add up to about 9% of worker CPU.</p>
+  </section>
+
+  <section>
+    <h2>The main thread</h2>
+    <p class="prose">The main thread is busy for 52% of the transform window, so it isn't the bottleneck. About 4.5 s of its 11.3 s of CPU is transformer work. The largest piece is reading every file synchronously to compute its SHA-1.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Activity</th><th>CPU</th><th>Share</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Block-list regular expression during the crawl (file map)</td><td>1.77 s</td><td class="neg">15.7%</td></tr>
+        <tr><td class="sans">Lazy SHA-1: <code>readFileSync</code> and hash, in-band on the main thread</td><td>1.75 s</td><td class="neg">15.5%</td></tr>
+        <tr><td class="sans">Resolution</td><td>1.32 s</td><td>11.7%</td></tr>
+        <tr><td class="sans">Bundle serialisation</td><td>1.19 s</td><td>10.6%</td></tr>
+        <tr><td class="sans">Transform cache writes (<code>JSON.stringify</code> and file write)</td><td>1.10 s</td><td>9.7%</td></tr>
+        <tr><td class="sans">IPC send</td><td>0.85 s</td><td>7.5%</td></tr>
+        <tr><td class="sans">IPC receive</td><td>0.74 s</td><td>6.6%</td></tr>
+        <tr><td class="sans">GC</td><td>0.41 s</td><td>3.6%</td></tr>
+        <tr><td class="sans">Other (crawler <code>lstat</code>, graph, cache keys, microtasks)</td><td>2.2 s</td><td>19%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">CPU profile of the main process in a cold release build at 8 workers, with each sample assigned to the first matching activity. With lazy SHA-1 (the default), <code>TreeFS.getOrComputeSha1</code> reads the whole file synchronously so the transform cache key can include its hash. The bytes then cross IPC to a worker, which hashes them again.</p>
+  </section>
+
+  <section>
+    <h2>Warm builds</h2>
+    <p class="prose">With every transform a cache hit, the build takes 3.7 s and the transformer is a small part of it. The file map takes 2.1 s, 1.85 s of which is the block-list expression. The 1.15 s transform window keeps the main thread 100% busy. Within it, cache reads (an async read, then <code>JSON.parse</code> on the main thread) take 0.24 s, SHA-1s 0.22 s and resolution 0.6 s. Serialisation takes the final 0.44 s.</p>
+  </section>
+
+  <section>
+    <h2>What three small changes buy</h2>
+    <p class="prose">Dropping the AST clone and loading the config once save 4–5% CPU each. The async read saves little CPU, but it shortens wall time by unblocking the main thread. None of the three changes a byte of the bundle. Together they cut CPU by 8% at 8 workers and 15% at 6 workers. Wall-time gains don't add up linearly, because at 8 workers the build is limited by cores, and CPU saved in one place partly turns into less contention elsewhere.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Change</th><th>Runs</th><th>Wall</th><th>CPU</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="4">Individually, 8 workers</td></tr>
+        <tr><td class="sans">No AST clone, as in react/metro#2034: <code>cloneInputAst: false</code>, plus <code>traverse.cache.clearScope()</code> before constant folding</td><td>4</td><td class="pos">−9.4%</td><td class="pos">−5.0%</td></tr>
+        <tr><td class="sans">One config load: React Native's transformer calls <code>transformSync</code> once instead of <code>parseSync</code> then <code>transformFromAstSync</code></td><td>3</td><td class="pos">−7.9%</td><td class="pos">−3.8%</td></tr>
+        <tr><td class="sans">Async read for the lazy SHA-1 (<code>fs.promises.readFile</code> and hash)</td><td>3</td><td class="pos">−6.4%</td><td>−0.6%</td></tr>
+        <tr><td class="sans"><code>enableBabelRCLookup: false</code></td><td>3</td><td>+3.6%</td><td>+0.4%</td></tr>
+        <tr><td class="sans">Drop the redundant <code>extends: babel.config.js</code> (Babel already loads the root config)</td><td>4</td><td>0.0%</td><td>−1.4%</td></tr>
+        <tr><td class="sans"><code>--max-semi-space-size=32</code></td><td>4</td><td>−3.6%</td><td>−1.2%</td></tr>
+        <tr class="group"><td colspan="4">Combined: no clone, one config load, async read</td></tr>
+        <tr><td class="sans">8 workers</td><td>5</td><td class="pos">−10.7%</td><td class="pos">−7.7%</td></tr>
+        <tr><td class="sans">6 workers, no changes</td><td>5</td><td>−3.1%</td><td class="pos">−9.8%</td></tr>
+        <tr><td class="sans">6 workers with the three changes</td><td>5</td><td class="pos">−7.4%</td><td class="pos">−15.4%</td></tr>
+        <tr class="group"><td colspan="4">No AST clone, dev builds, 8 workers</td></tr>
+        <tr><td class="sans">react/metro#2034's variant</td><td>4</td><td class="pos">−7.1%</td><td class="pos">−8.7%</td></tr>
+        <tr><td class="sans"><code>traverse.cache.clear()</code> before the inline pass instead</td><td>4</td><td class="pos">−5.3%</td><td class="pos">−5.9%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Cold builds, interleaved runs, medians against a baseline from the same set: 18.1–19.5 s and 130–133 s of CPU at 8 workers. CPU is user + sys across all processes. Run-to-run spread is about ±5% of wall time, so wall deltas under 5% are noise; CPU is steadier. Every variant produced a bundle byte-identical to its baseline.</p>
+    <div class="prose stack">
+      <p><strong>The AST clone</strong> was a workaround for <a href="https://github.com/react/metro/issues/641">react/metro#641</a>. <a href="https://github.com/vzaidman">@vzaidman</a> traced the underlying bug in <a href="https://github.com/react/metro/pull/2034">react/metro#2034</a>. Babel reuses scope information cached by an earlier pass, so constant folding can delete a function that a later-inserted call still uses. The PR clears the scope cache right before constant folding instead of cloning. Mattermost uses the configuration from #641 (ES modules without <code>experimentalImportSupport</code>). Its bundles come out byte-identical with the PR's change in both release and dev, which adds an open-source app to the PR's own measurements (about 4% wall and 5% CPU averaged across three large production apps). Clearing the whole cache before the inline pass instead throws away scopes the Babel transformer has just built. That costs more in dev, where constant folding never runs.</p>
+    </div>
+  </section>
+
+  <section id="worker-threads">
+    <h2>A correctness bug in worker-thread mode</h2>
+    <p class="prose">With <code>transformer.unstable_workerThreads: true</code>, the release bundle is different. Reanimated's <code>IS_JEST = !!process.env.JEST_WORKER_ID</code> compiles to <code>IS_JEST = true</code>, which in turn sets its <code>SHOULD_BE_USE_WEB</code> to <code>true</code>.</p>
+    <div class="prose stack">
+      <ul class="tight">
+        <li><strong>Worker threads see the variable.</strong> jest-worker sets <code>JEST_WORKER_ID</code> in each worker's environment. It does this for child processes too, but Metro passes its own <code>forkOptions.env</code>, which replaces jest-worker's environment object. So child processes only miss the variable by accident, and threads don't miss it at all.</li>
+        <li><strong>Some plugins inline the build environment.</strong> <code>react-native-dotenv</code>, like any plugin that inlines <code>process.env.*</code> from the build process, bakes the value into the bundle.</li>
+        <li><strong>Fix:</strong> Metro can remove <code>JEST_WORKER_ID</code> from the transform environment in both modes, so the worker type can't change output.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="blocklist">
+    <h2>Outside the transformer: a 200× slower block list</h2>
+    <p class="prose">Mattermost's <code>resolver.blockList</code> entries are written as <code>/.*\.test\.(js|jsx|ts|tsx)$/</code> and similar, a common style in React Native apps. Metro combines them with its own <code>[/\\]\.(git|hg)[/\\]</code> into one unanchored alternation, and the leading <code>.*</code> makes it backtrack across every crawled path. Matching the project's 112,678 paths takes 1,582 ms as written, and 8 ms with each leading <code>.*</code> removed, with the same 1,230 matches. That is 16% of main-thread CPU in a cold build and about 45% of a warm one. Removing a leading <code>.*</code> from an unanchored pattern doesn't change what <code>test()</code> matches, so Metro could do it when combining patterns, or warn about it.</p>
+  </section>
+
+  <section>
+    <h2>Recommendations</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>Land <a href="https://github.com/react/metro/pull/2034">react/metro#2034</a>.</strong> It saves 5–9% CPU and 7–9% wall on Mattermost, with identical output.</li>
+        <li><strong>Load the Babel config once per file in <code>@react-native/metro-babel-transformer</code>.</strong> Call <code>transformSync</code> when the Hermes parser isn't in use, or call <code>loadPartialConfig</code> once and reuse the result. That saves 4–6% CPU. Expo's transformer wasn't checked.</li>
+        <li><strong>Move lazy SHA-1 reads off the main thread.</strong> Either read asynchronously, or let the worker hash the file and return the hash with its result, and stop sending the worker source it can read itself.</li>
+        <li><strong>Test a performance-core-aware <code>maxWorkers</code> default</strong> on machines with efficiency cores. Here, 6 workers matched 8 with 10% less CPU. Confirm on a quiet machine and on Linux before changing it.</li>
+        <li><strong>Merge Metro's post-transform passes.</strong> Inline-requires and inline, constant folding, <code>collectDependencies</code> and the function-map traversal each walk the AST, and two of them also set up a fresh <code>File</code> and crawl scope. Together they are about 27% of worker CPU in release builds.</li>
+        <li><strong>Start workers while the file map builds</strong> to save about 0.5 s on every cold start, and send the transformer config once per worker rather than with every job.</li>
+        <li><strong>Fix the worker-thread environment leak</strong> before promoting <code>unstable_workerThreads</code>.</li>
+        <li><strong>Normalise leading <code>.*</code> in block-list patterns.</strong></li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <ul class="tight">
+        <li><strong>App.</strong> Mattermost mobile at <span class="mono">ad6b834</span>, which uses React Native 0.83.9 and <code>babel-preset-expo</code> 55.0.21. Its <code>babel.config.js</code> also adds <code>@babel/preset-env</code>, <code>@babel/preset-typescript</code>, <code>transform-runtime</code>, legacy decorators, <code>module-resolver</code> (27 aliases), <code>react-native-dotenv</code>, <code>react-native-worklets/plugin</code> and <code>formatjs</code>. Its Metro config is <code>@react-native/metro-config</code> with a custom <code>resolveRequest</code>, built here with Metro 0.87.1.</li>
+        <li><strong>Builds.</strong> <code>Metro.runBuild</code> with the app's own config for the iOS entry point. Release builds use <code>dev: false, minify: false</code>, which is what React Native's Xcode script passes when Hermes is enabled, and produce 7,082 modules and 52 MB. Dev builds produce 7,316 modules. "Cold" means an empty transform cache with a warm file-map cache and Watchman off (Node crawler). The transform cache is outside the project root.</li>
+        <li><strong>Machine.</strong> Apple M4 Pro with 8 performance and 4 efficiency cores and 24 GB, running Node 26.11.1 on macOS. The machine was not idle: an iOS simulator used about one core throughout, and system daemons occasionally added more.</li>
+        <li><strong>Instrumentation.</strong> Timers inserted into <code>Transformer.transformFile</code>, jest-worker's send and receive paths, the worker entry point, every stage of <code>metro-transform-worker</code>, React Native's Babel transformer, and <code>@babel/core</code>'s config loading, file set-up and per-pass <code>pre</code>, traversal and <code>post</code>. Per-plugin time comes from <code>wrapPluginVisitorMethod</code>, with nested calls subtracted. The main thread's event-loop utilisation was sampled every 50 ms. IPC sizes are <code>v8.serialize</code> lengths of the request and response messages, measured in a separate run. Instrumentation added about 4% to worker time with plugin wrapping and less without, and every toggle is off by default.</li>
+        <li><strong>Profiles.</strong> <code>--cpu-prof</code> for the main process and every worker, in separate runs, for GC share, config-loading breakdown and main-thread activity.</li>
+        <li><strong>A/B runs.</strong> Each variant is an environment-gated patch, run in interleaved rounds with medians reported. Every variant's bundle was checked for byte identity by SHA-1.</li>
+      </ul>
+    </div>
+  </section>
+</main>
+</body>
+</html>

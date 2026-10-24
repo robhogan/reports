@@ -24,6 +24,7 @@
   <h1>Reports</h1>
   <p class="lede">Benchmarks and investigations, mostly on React Native, Metro and Hermes.</p>
   <ul>
+    <li><a href="metro-transformer-performance/">Where Metro&#x27;s transformer spends a cold build</a><span class="date">2026-10-24</span><p>Cold-build profile of Metro&#x27;s transform pipeline on Mattermost mobile: worker scaling and IPC, Babel config and per-plugin costs, the main thread, and three fixes that cut CPU 8–15% with identical output.</p></li>
     <li><a href="react-native-regenerator-removal/">Removing regenerator from Hermes dev builds</a><span class="date">2026-10-21</span><p>Whether @react-native/babel-preset still needs regenerator in Hermes dev builds now that Hermes 260318099.0.2 fixed generator breakpoints: version history, a breakpoint-by-breakpoint comparison of 248 lines, and the native-generator bugs that remain.</p></li>
     <li><a href="metro-1676-safety-review/">Dropping graceful-fs from Metro</a><span class="date">2026-10-18</span><p>Safety review of react/metro#1676: what Metro loses without graceful-fs, checked against its source and stress-tested under a 256-fd hard limit.</p></li>
     <li><a href="react-native-58965-destructuring/">Native destructuring on Hermes V1</a><span class="date">2026-10-12</span><span class="date">updated 2026-10-21</span><p>On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.</p></li>
