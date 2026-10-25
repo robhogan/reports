@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Worker threads vs child processes in Metro</title>
+<meta name="description" content="Cold-build comparison of Metro&#x27;s transform workers as worker threads or child processes on macOS, Linux and Windows: build time, CPU, memory, per-job costs, a thread-mode output bug, and what committing to either would enable.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../assets/report.css">
+</head>
+<body>
+<main class="page">
+  <header>
+    <div class="eyebrow">metro · benchmark</div>
+    <h1>Worker threads vs child processes in Metro</h1>
+    <p class="lede">Whether Metro's transform workers should be worker threads (<code>transformer.unstable_workerThreads</code>) or child processes, measured on cold builds of Mattermost mobile on macOS, Linux and Windows, with per-job instrumentation to explain the differences.</p>
+    <div class="meta">
+      <span>Metro <span class="mono">5cfcfe21</span> + react/metro#2034</span><span>Mattermost mobile <span class="mono">ad6b834</span></span><span>Node 26.11.1 (macOS), 24.21.0 (Linux, Windows)</span><span>Measured 2026-10-25</span><span><a href="#revisions">Published 2026-10-25</a></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v pos">Prefer threads</span><span class="d">Less memory on every machine, as fast or faster on Linux and Windows, and the only mode that allows shared memory between workers.</span></div>
+      <div><span class="k">Peak memory</span><span class="v pos">−6 to −19%</span><span class="d">Threads used less memory in every configuration measured, across three operating systems.</span></div>
+      <div><span class="k">Build time</span><span class="v">−4.1 to +4.8%</span><span class="d">Threads were 0.3–4.1% faster on Linux and Windows, and 3.1–4.8% slower on a saturated Mac.</span></div>
+      <div><span class="k">Before switching</span><span class="v neg">Output differs</span><span class="d">In thread mode today, a Babel plugin can inline <code>JEST_WORKER_ID</code> into the bundle. Metro needs to scrub it first.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>On build time alone the choice barely matters: the two modes are within 5% of each other everywhere. Threads hand work to workers and back more cheaply. They start in about half the time, cost the main thread about half as much per job sent, and leave shorter gaps between jobs. They also use less memory, because the workers share one process. Against that, on a Mac running at full load each job costs more CPU in thread mode, which cancels the gains. That happens only once the machine is saturated, and nowhere else.</p>
+      <p>The stronger argument is what each mode makes possible. Only threads can share memory with the main thread, which is the route to a transformer that answers file-system and config questions from Metro's in-memory file map instead of doing its own I/O. Processes keep crash isolation and per-worker V8 flags. Either way, thread mode currently produces a different bundle from process mode, so that has to be fixed before it could become the default.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Build time, CPU and memory on three machines</h2>
+    <p class="prose">Threads used less memory on every machine. They were slightly faster on Linux and Windows, and slower only on the Mac at 6–8 workers.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Machine</th><th>Workers</th><th>Wall, processes</th><th>Wall, threads</th><th>CPU</th><th>Peak RSS</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="6">Mac mini, M4 Pro (8 performance + 4 efficiency cores), 24 GB</td></tr>
+        <tr><td class="sans">macOS</td><td>6</td><td>15.5 s</td><td>15.9 s</td><td class="neg">+6.4%</td><td class="pos">−18.7%</td></tr>
+        <tr><td class="sans">macOS</td><td>8</td><td>15.1 s</td><td class="neg">15.9 s (+4.8%)</td><td class="neg">+10.3%</td><td class="pos">−14.0%</td></tr>
+        <tr class="group"><td colspan="6">Intel i5-4278U (2 cores, 4 threads), 8 GB</td></tr>
+        <tr><td class="sans">Linux</td><td>2</td><td>117.7 s</td><td>117.3 s</td><td>−0.5%</td><td class="pos">−6.2%</td></tr>
+        <tr><td class="sans">Linux</td><td>4</td><td>114.8 s</td><td>113.1 s</td><td>−1.8%</td><td class="pos">−11.8%</td></tr>
+        <tr class="group"><td colspan="6">AMD Ryzen 7 7730U (8 cores, 16 threads, 15 W laptop part), 12.9 GB</td></tr>
+        <tr><td class="sans">Windows 11</td><td>8</td><td>50.9 s</td><td>50.1 s</td><td class="pos">−4.2%</td><td class="pos">−10.4%</td></tr>
+        <tr><td class="sans">Windows 11</td><td>12</td><td>50.9 s</td><td class="pos">48.8 s (−4.1%)</td><td class="pos">−4.5%</td><td class="pos">−10.3%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Cold release builds (empty transform cache), medians of 3 interleaved runs per configuration. CPU is user + system time summed over the build's whole process tree, and peak RSS is summed over the same tree. Deltas are threads relative to processes. With <code>JEST_WORKER_ID</code> scrubbed (see <a href="#jest-worker-id">below</a>), threads and processes produced byte-identical bundles on each machine. Wall-time deltas under about 5% are within run-to-run noise on the Mac, which was not idle: other processes used about 2–2.5 cores throughout. CPU and memory deltas were consistent across runs.</p>
+  </section>
+
+  <section>
+    <h2>Where the difference comes from</h2>
+    <p class="prose">With 8 workers on the Mac, threads win on every hand-off but lose on the cost of each job. Instrumenting every job, three builds per mode, shows both effects.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">8 workers, macOS</th><th>Processes</th><th>Threads</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">First job starts, after the worker pool is created</td><td>169–179 ms</td><td class="pos">75–76 ms</td></tr>
+        <tr><td class="sans">All 8 workers running</td><td>469–498 ms</td><td class="pos">356–364 ms</td></tr>
+        <tr><td class="sans">Main-thread time spent sending jobs</td><td>408–537 ms</td><td class="pos">227–273 ms</td></tr>
+        <tr><td class="sans">Idle gaps between jobs, summed over workers</td><td>13.8–16.3 s</td><td class="pos">9.4–11.8 s</td></tr>
+        <tr><td class="sans">Worker utilisation</td><td>82–84%</td><td class="pos">88–90%</td></tr>
+        <tr><td class="sans">Main thread busy</td><td>51–57%</td><td class="pos">41–46%</td></tr>
+        <tr><td class="sans">CPU per job, relative to the same file at 2 workers</td><td>×1.32–1.36</td><td class="neg">×1.48–1.59</td></tr>
+        <tr><td class="sans">Useful work per second, in 2-worker CPU</td><td>3.67–3.83</td><td>3.40–3.74</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Per-job CPU is the worker's JS-thread CPU time for each file (<code>process.threadCpuUsage</code>), divided by the same file's time in a 2-worker process build. It excludes each worker's first 50 jobs, which include warm-up. Useful work per second is the reference CPU of all files transformed, divided by the transform phase's duration, so it discounts work done on slower cores.</p>
+
+    <div class="prose stack">
+      <p><strong>The extra per-job cost appears only under saturation.</strong> At 2 workers, per-job CPU was ×1.00 for processes and ×1.02 for threads. At 4 workers it was ×1.13 and ×1.11, and threads finished sooner (18.6 s vs 20.2 s). The gap opens only at 8 workers, when the machine is saturated: system-wide idle CPU during an 8-worker build was under 5%.</p>
+      <p><strong>The extra cost is in JavaScript itself, not in GC or messaging.</strong> CPU profiles of the 8 workers in each mode show Babel's own code running slower in thread mode, while GC and Node internals got cheaper.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Self time, 8 workers, macOS</th><th>Processes</th><th>Threads</th><th>Change</th></tr></thead>
+      <tbody>
+        <tr><td>@babel/traverse</td><td>29.6 s</td><td>40.1 s</td><td class="neg">+36%</td></tr>
+        <tr><td>@babel/types</td><td>7.4 s</td><td>9.5 s</td><td class="neg">+28%</td></tr>
+        <tr><td>@babel/generator</td><td>3.0 s</td><td>3.6 s</td><td class="neg">+21%</td></tr>
+        <tr><td>@babel/parser</td><td>8.0 s</td><td>9.6 s</td><td class="neg">+20%</td></tr>
+        <tr><td class="sans">Garbage collector</td><td>8.0 s</td><td>7.0 s</td><td class="pos">−13%</td></tr>
+        <tr><td class="sans">Node internals (including IPC serialisation)</td><td>5.0 s</td><td>2.4 s</td><td class="pos">−52%</td></tr>
+      </tbody>
+    </table></div>
+    <div class="prose stack">
+      <p><strong>Ruled out.</strong></p>
+      <ul class="tight">
+        <li><strong>V8's helper threads.</strong> In thread mode all isolates share one V8 platform pool, 4 threads by default, where each child process gets its own. Raising the pool to 16 threads gave ×1.43 per job, and to 32 gave ×1.47, against ×1.48–1.59 by default.</li>
+        <li><strong>A scheduling demotion.</strong> Sampled thread priorities were mostly 20 in both modes, decaying to between 10 and 20 under contention, as macOS does for busy time-sharing threads.</li>
+        <li><strong>A shared V8 heap cage.</strong> The Node build used has pointer compression and its shared cage disabled.</li>
+      </ul>
+      <p><strong>Most likely cause (an inference).</strong> With the machine saturated, macOS places the threads of one process onto slower cores more often than it places eight separate processes. That fits two observations: the slowdown is uniform across JavaScript code, and it appears only at saturation. Confirming it needs per-cluster residency from <code>powermetrics</code>, which wasn't available.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Linux and Windows</h2>
+    <p class="prose">Neither machine showed the Mac's per-job penalty. On both, per-job CPU in thread mode matched or beat process mode at every worker count measured.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Instrumented single runs</th><th>Workers</th><th>Wall, processes</th><th>Wall, threads</th><th>Per-job CPU, processes</th><th>Per-job CPU, threads</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Linux, i5 (2C/4T)</td><td>2</td><td>119.3 s</td><td>118.0 s</td><td>×1.00</td><td>×0.99</td></tr>
+        <tr><td class="sans">Linux, i5 (2C/4T)</td><td>4</td><td>113.0 s</td><td>113.1 s</td><td>×1.61</td><td>×1.62</td></tr>
+        <tr><td class="sans">Windows, Ryzen (8C/16T)</td><td>4</td><td>57.3 s</td><td class="pos">51.1 s</td><td>×1.00</td><td>×1.00</td></tr>
+        <tr><td class="sans">Windows, Ryzen (8C/16T)</td><td>8</td><td>49.4 s</td><td class="pos">46.4 s</td><td>×1.94</td><td>×1.94</td></tr>
+        <tr><td class="sans">Windows, Ryzen (8C/16T)</td><td>12</td><td>49.0 s</td><td class="pos">45.2 s</td><td>×2.52</td><td class="pos">×2.07</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Single instrumented runs, so wall times carry more noise than the medians above. Per-job CPU is relative to the same file in a 2-worker process build on the same machine.</p>
+    <div class="prose stack">
+      <p>Both machines also stop scaling early, for different reasons, and in both cases it's the same for threads and processes:</p>
+      <ul class="tight">
+        <li><strong>Linux:</strong> The 2 physical cores are the limit. Workers 3 and 4 share cores through hyper-threading, so each runs at about 60% speed, and total throughput rises only about 6% from 2 to 4 workers.</li>
+        <li><strong>Windows:</strong> Per-job CPU nearly doubles at 8 workers. Effective clock speed dropped only 8–9% (from about 4.07 GHz at 2 workers to 3.76 GHz at 8), and kernel time stayed near 4% of job CPU. Four CPU-only busy loops beside 4 workers caused no slowdown at all. So the extra cost comes from Babel workers interfering with each other, most likely through the shared 16 MB L3 cache and dual-channel memory. That is an inference: hardware counters weren't read.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="jest-worker-id">
+    <h2>A correctness bug in thread mode</h2>
+    <p class="prose">With <code>transformer.unstable_workerThreads</code> enabled, the release bundle differs from process mode. Reanimated's <code>IS_JEST = !!process.env.JEST_WORKER_ID</code> compiles to <code>IS_JEST = true</code>, which also switches its <code>SHOULD_BE_USE_WEB</code> on.</p>
+    <div class="prose stack">
+      <ul class="tight">
+        <li><strong>Threads see the variable.</strong> jest-worker sets <code>JEST_WORKER_ID</code> in each worker's environment. It does this for child processes too, but Metro passes its own <code>forkOptions.env</code>, which replaces jest-worker's environment object. So child processes only miss it by accident.</li>
+        <li><strong>Plugins bake it in.</strong> <code>react-native-dotenv</code> inlines any <code>process.env.*</code> it reads from the build process, as do other env-inlining plugins.</li>
+        <li><strong>Fix:</strong> Metro can delete <code>JEST_WORKER_ID</code> when a worker loads, in both modes. Doing exactly that made thread and process bundles byte-identical on all three machines.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>What committing to one mode would enable</h2>
+    <div class="prose stack">
+      <p><strong>Threads.</strong></p>
+      <ul class="tight">
+        <li><strong>Transfer instead of copy.</strong> Source and results could move between threads as transferable <code>ArrayBuffer</code>s instead of structured-clone copies. A cold build of this app sends about 57 MB to workers and receives about 121 MB back.</li>
+        <li><strong>Synchronous queries to the main thread.</strong> With a <code>SharedArrayBuffer</code> and <code>Atomics.wait</code>, a worker can block on an answer from the main thread. Workers could then look up files and Babel config locations in Metro's in-memory file map instead of searching the disk. That would make the transformer's inputs visible to Metro's invalidation.</li>
+        <li><strong>Shared read-only data.</strong> Large byte data, such as a serialised file-map snapshot, could exist once rather than per worker.</li>
+        <li><strong>Lower baseline costs.</strong> 6–19% less memory, about 100 ms faster start-up for the first job, and cheaper messaging on the main thread.</li>
+      </ul>
+      <p><strong>Processes.</strong></p>
+      <ul class="tight">
+        <li><strong>Isolation.</strong> A native crash takes down only one worker, and workers can be recycled to contain memory leaks in plugins. In thread mode, an isolate running out of memory stops only its worker, but a native crash stops the server.</li>
+        <li><strong>Per-worker V8 flags.</strong> Processes can be launched with flags of their own via <code>execArgv</code>, including ones <code>NODE_OPTIONS</code> rejects, such as <code>--single-threaded-gc</code>. Threads share one set of process-wide flags.</li>
+        <li><strong>Better behaviour on a saturated Mac</strong>, as measured here.</li>
+      </ul>
+      <p>Thread mode has two further requirements. Native addons loaded by Babel plugins must be safe in worker threads, and <code>process.env</code> is a per-thread copy, so code that relies on mutating it, as Babel transformers do with <code>BABEL_ENV</code>, behaves per worker.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Recommendations</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>Fix the <code>JEST_WORKER_ID</code> leak</strong> before recommending or defaulting to thread mode.</li>
+        <li><strong>Treat threads as the direction.</strong> They're equal or better everywhere except a saturated Mac, they always use less memory, and they're required for shared-memory designs.</li>
+        <li><strong>Avoid saturation on the Mac.</strong> Keep the default worker count at or below the number of performance cores: on this Mac, 6 workers matched 8 on build time with about 10% less CPU. That also avoids the only case where threads lose.</li>
+        <li><strong>Re-measure the Mac case from a foreground terminal.</strong> These runs were launched with utility QoS (see Method), which may affect how macOS places threads.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <ul class="tight">
+        <li><strong>App and build.</strong> Mattermost mobile (React Native 0.83.9) at <span class="mono">ad6b834</span>, iOS release bundle (<code>dev: false</code>, <code>minify: false</code>, as React Native passes for Hermes), 7,082 modules. Built with <code>Metro.runBuild</code> using the app's own config, on Metro <span class="mono">5cfcfe21</span> with react/metro#2034 applied. The app's Babel path aliases moved from <code>babel-plugin-module-resolver</code> to its Metro config, and its block-list patterns were rewritten without a leading <code>.*</code>. Every build is cold: an empty transform cache with a warm file-map cache.</li>
+        <li><strong>Machines.</strong>
+          <ul class="tight">
+            <li>Mac mini, M4 Pro (8 performance + 4 efficiency cores), 24 GB, macOS 27, Node 26.11.1. An iOS simulator and system daemons were running throughout, using about 2–2.5 cores. The benchmark processes ran at utility QoS (scheduling priority 20), and that couldn't be raised from the harness.</li>
+            <li>Intel i5-4278U, 2 cores / 4 threads, 8 GB, Linux Mint 22.3, Node 24.21.0. The bundle was byte-identical to the Mac's.</li>
+            <li>AMD Ryzen 7 7730U, 8 cores / 16 threads, 12.9 GB, Windows 11 Pro, Node 24.21.0, Defender real-time scanning on with no exclusions. The app was copied with workspace symlinks dereferenced, so its bundle differs from the other two machines', but not between modes.</li>
+          </ul>
+        </li>
+        <li><strong>A/B runs.</strong> Configurations run in interleaved rounds, 3 per configuration, reporting medians. CPU and peak RSS are sampled every 250 ms across the build's process tree (<code>/proc</code> on Linux, <code>Win32_Process</code> on Windows, <code>ps</code> on macOS). Thread mode is Metro's <code>transformer.unstable_workerThreads</code>; worker count is <code>maxWorkers</code>.</li>
+        <li><strong>Instrumentation.</strong> Environment-gated timers in Metro's worker entry point and jest-worker's send and receive paths record, for each job:
+          <ul class="tight">
+            <li>wall time, JS-thread CPU time (<code>process.threadCpuUsage</code>, split into user and kernel) and process CPU time;</li>
+            <li>send and receive timestamps;</li>
+            <li>main-thread event-loop utilisation, sampled every 50 ms.</li>
+          </ul>
+          Ratios compare each file with the same file in a 2-worker process build on the same machine. CPU profiles are from <code>--cpu-prof</code>, which in thread mode writes one profile per worker thread.</li>
+        <li><strong>Supporting experiments.</strong>
+          <ul class="tight">
+            <li>V8 platform pool sizes via <code>--v8-pool-size</code>.</li>
+            <li>Scheduling priorities sampled with <code>ps -M</code>.</li>
+            <li>Effective clock speed on Windows from the <code>% Processor Performance</code> counter.</li>
+            <li>Contention tests running 4 workers beside 4, 8 or 12 CPU-only busy loops (a tight integer loop with no memory traffic).</li>
+          </ul>
+        </li>
+      </ul>
+    </div>
+  </section>
+
+  <section id="revisions">
+    <h2>Revisions</h2>
+    <div class="scroll"><table class="revisions">
+      <thead><tr><th>Revision</th><th>Date</th><th class="l">Change</th></tr></thead>
+      <tbody>
+        <tr><td><a href="v/1/">1</a></td><td>2026-10-25</td><td class="l">First published.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Each revision links to a frozen copy of the report as it was published. The <a href="https://github.com/robhogan/reports/commits/main/metro-worker-threads-vs-processes">commit history</a> has every edit.</p>
+  </section>
+</main>
+</body>
+</html>

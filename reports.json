@@ -26,6 +26,19 @@
     ]
   },
   {
+    "slug": "metro-worker-threads-vs-processes",
+    "title": "Worker threads vs child processes in Metro",
+    "description": "Cold-build comparison of Metro's transform workers as worker threads or child processes on macOS, Linux and Windows: build time, CPU, memory, per-job costs, a thread-mode output bug, and what committing to either would enable.",
+    "date": "2026-10-25",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-25",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "react-native-58965-destructuring",
     "title": "Native destructuring on Hermes V1",
     "description": "On-device release benchmarks of dropping @babel/plugin-transform-destructuring for Hermes V1 (react/react-native#58965): typical-app impact, per-pattern speed, bytecode size and the tradeoffs.",
