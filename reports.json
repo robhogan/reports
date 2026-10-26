@@ -13,6 +13,19 @@
     ]
   },
   {
+    "slug": "metro-lazily-define-modules",
+    "title": "Lazy module definition on two phones",
+    "description": "Startup time and memory with Metro's serializer.unstable_lazilyDefineModules in a 5,000-module React Native app on an iPhone 12 mini and a Galaxy A16: lower memory everywhere, no time change on iOS, and a 1–3% cost on Android when nearly every module runs at startup.",
+    "date": "2026-10-26",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-26",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "metro-transformer-performance",
     "title": "Where Metro's transformer spends a cold build",
     "description": "Cold-build profile of Metro's transform pipeline on Mattermost mobile: worker scaling and IPC, Babel config and per-plugin costs, the main thread, and three fixes that cut CPU 8–15% with identical output.",
