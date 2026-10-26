@@ -22,6 +22,11 @@
         "n": 1,
         "date": "2026-10-26",
         "note": "First published."
+      },
+      {
+        "n": 2,
+        "date": "2026-10-26",
+        "note": "Explain the A16 all-screens cost: on-demand definition CPU warm, plus about 7 ms of extra IO cold from the lazy bytecode layout."
       }
     ]
   },

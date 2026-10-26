@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lazy module definition on two phones</title>
+<meta name="description" content="Startup time and memory with Metro&#x27;s serializer.unstable_lazilyDefineModules in a 5,000-module React Native app on an iPhone 12 mini and a Galaxy A16: lower memory everywhere, no time change on iOS, and a 1–3% cost on Android when nearly every module runs at startup.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+<style>
+td.sans, th.sans { font-family: var(--font-body); }
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 2 of this report, published 2026-10-26. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">metro · benchmark</div>
+    <h1>Lazy module definition on two phones</h1>
+    <p class="lede">What Metro's <code>serializer.unstable_lazilyDefineModules</code> does to startup time and memory in a 5,000-module React Native release app, measured in interleaved launches on an iPhone 12 mini and a Galaxy A16.</p>
+    <div class="meta">
+      <span>Metro <span class="mono">5cfcfe2</span> + serializer wiring</span><span>React Native 0.88.0-rc.4, Hermes</span><span>iPhone 12 mini, iOS 26</span><span>Galaxy A16, Android</span><span>Measured 2026-10-25</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Memory</span><span class="v pos">−7 to −11%</span><span class="d">iOS physical footprint, 2.5–2.7 MB lower in every paired round. Peak live JS heap is 33–40% lower on iOS and 16–21% lower on the A16.</span></div>
+      <div><span class="k">iPhone time to first commit</span><span class="v">No change</span><span class="d">Within ±1.4% in all four configurations, every CI spanning zero.</span></div>
+      <div><span class="k">A16, screens on demand</span><span class="v">No change</span><span class="d">+0.1% cold and +0.3% warm, with 95% CIs about ±1.5 ms either side.</span></div>
+      <div><span class="k">A16, all screens at startup</span><span class="v neg">+1.2 to +3.0%</span><span class="d">+4.2 ms warm and +11.3 ms cold, both CIs well clear of zero. Defining modules on demand costs CPU, and the lazy bytecode layout costs about 7 ms of extra IO cold.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>Lazy definition reliably cuts memory at startup: the ~2,000 modules that never run at startup no longer get closures, dependency arrays or registry entries. The define phase before the first module runs shrinks by 1.5–2.6 ms on the iPhone and 5.6–6.5 ms on the A16, but that work reappears on first require, so time to React's first commit doesn't improve.</p>
+      <p>The catch is the A16 when almost every module is required at startup. There, lazy definition costs 4 ms warm and 11 ms cold (3%) by the first commit, and the iPhone shows nothing comparable. Two things add up: defining about 3,000 modules one at a time costs more CPU than defining all 5,000 in one batch, and with a cold page cache the lazy bundle's definition code is read from flash in more, smaller reads.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tradeoffs</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev med">+3.0% cold</span><div><span class="t">Slower first commit on Android when nearly every module runs at startup</span><span class="b">+11.3 ms (95% CI +9.8 to +12.8 ms) from bundle start to first commit on the A16, all screens imported at startup, cold page cache. +4.2 ms (+1.2%) warm. Apps that defer their screens with inline requires don't see it. About 7 ms of the cold cost is IO caused by the lazy bundle's bytecode layout, the rest CPU spent defining modules on demand.</span></div></div>
+      <div class="tradeoff"><span class="sev low">+0.4–0.5%</span><div><span class="t">Larger bytecode</span><span class="b">+41–50 KB raw and +9–11 KB gzipped on a 9.5 MB HBC file, from the segment's <code>switch</code> scaffolding.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Time to first commit</h2>
+    <p class="prose">Time runs from bundle start to the feed screen's first <code>useLayoutEffect</code>. On the iPhone, no configuration differs by more than 0.8 ms. On the A16, screens on demand are unchanged, and loading every screen at startup is slower with lazy definition.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Configuration</th><th>Eager</th><th>Lazy − eager (95% CI)</th><th>Relative</th><th>Lazy lower in</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="5">iPhone 12 mini, 49 paired rounds</td></tr>
+        <tr><td class="sans">Screens on demand, warm</td><td>51.6 ms</td><td>−0.7 ms<br><span class="mono" style="color:var(--fg-3)">−1.6 … +0.3</span></td><td>−1.4%</td><td>59%</td></tr>
+        <tr><td class="sans">Screens on demand, cold</td><td>54.4 ms</td><td>−0.3 ms<br><span class="mono" style="color:var(--fg-3)">−1.0 … +1.2</span></td><td>−0.6%</td><td>53%</td></tr>
+        <tr><td class="sans">All screens at startup, warm</td><td>82.4 ms</td><td>−0.4 ms<br><span class="mono" style="color:var(--fg-3)">−2.4 … +1.2</span></td><td>−0.5%</td><td>57%</td></tr>
+        <tr><td class="sans">All screens at startup, cold</td><td>85.4 ms</td><td>−0.8 ms<br><span class="mono" style="color:var(--fg-3)">−1.6 … +0.4</span></td><td>−0.9%</td><td>59%</td></tr>
+        <tr class="group"><td colspan="5">Galaxy A16, 576 paired rounds</td></tr>
+        <tr><td class="sans">Screens on demand, warm</td><td>251.7 ms</td><td>+0.7 ms<br><span class="mono" style="color:var(--fg-3)">−0.7 … +1.8</span></td><td>+0.3%</td><td>48%</td></tr>
+        <tr><td class="sans">Screens on demand, cold</td><td>286.5 ms</td><td>+0.4 ms<br><span class="mono" style="color:var(--fg-3)">−1.0 … +2.2</span></td><td>+0.1%</td><td>49%</td></tr>
+        <tr><td class="sans">All screens at startup, warm</td><td>346.1 ms</td><td class="neg">+4.2 ms<br><span class="mono" style="color:var(--fg-3)">+2.2 … +5.4</span></td><td class="neg">+1.2%</td><td>40%</td></tr>
+        <tr><td class="sans">All screens at startup, cold</td><td>376.5 ms</td><td class="neg">+11.3 ms<br><span class="mono" style="color:var(--fg-3)">+9.8 … +12.8</span></td><td class="neg">+3.0%</td><td>28%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Medians of paired rounds, round 0 of each run dropped. The difference is the median of per-round differences, with a 95% bootstrap CI. The A16 has much more launch-to-launch spread (about ±10 ms against ±1–2 ms), so it needed about 12× the rounds for CIs of similar width: 2.5–3.2 ms wide, against 1.9–3.6 ms on the iPhone.</p>
+  </section>
+
+  <section>
+    <h2>Where the time moves</h2>
+    <p class="prose">The define phase, from bundle start to the first module running, shrinks on both phones, because the eager bundle runs every <code>__d(…)</code> call there and the lazy one runs none. The work moves to the first <code>require</code> of each module, after the first module runs.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Configuration</th><th>iPhone eager</th><th>iPhone lazy − eager</th><th>A16 eager</th><th>A16 lazy − eager</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Screens on demand, warm</td><td>2.1 ms</td><td class="pos">−1.5 ms</td><td>12.9 ms</td><td class="pos">−6.4 ms</td></tr>
+        <tr><td class="sans">Screens on demand, cold</td><td>6.0 ms</td><td class="pos">−2.6 ms</td><td>23.2 ms</td><td class="pos">−5.9 ms</td></tr>
+        <tr><td class="sans">All screens at startup, warm</td><td>2.2 ms</td><td class="pos">−1.5 ms</td><td>12.9 ms</td><td class="pos">−6.5 ms</td></tr>
+        <tr><td class="sans">All screens at startup, cold</td><td>5.6 ms</td><td class="pos">−2.2 ms</td><td>23.1 ms</td><td class="pos">−5.6 ms</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Define phase: bundle start to the first-imported module. Every CI excludes zero. iPhone 49 paired rounds, A16 576.</p>
+  </section>
+
+  <section>
+    <h2>Memory</h2>
+    <p class="prose">Memory is the robust result. In all 196 paired iOS rounds, the lazy launch had the lower physical footprint, by 2.5–2.7 MB (7–11%), and it ran one fewer GC. On the A16, Hermes uses 32-bit compressed values, so the JS heap saving is smaller in bytes.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Metric</th><th>Screens on demand</th><th>All screens at startup</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">iPhone 12 mini</td></tr>
+        <tr><td class="sans">Physical footprint</td><td class="pos">−2.61 MB (−11%)</td><td class="pos">−2.48 MB (−7%)</td></tr>
+        <tr><td class="sans">Peak live JS heap after a GC</td><td class="pos">−1.23 MB (−40%)</td><td class="pos">−1.01 MB (−33%)</td></tr>
+        <tr><td class="sans">JS bytes allocated</td><td class="pos">−1.65 MB</td><td class="pos">−0.99 MB</td></tr>
+        <tr><td class="sans">GC time</td><td class="pos">−1.4 ms</td><td class="pos">−1.4 ms</td></tr>
+        <tr class="group"><td colspan="3">Galaxy A16</td></tr>
+        <tr><td class="sans">Peak live JS heap after a GC</td><td class="pos">−492 KB (−21%)</td><td class="pos">−388 KB (−16%)</td></tr>
+        <tr><td class="sans">Anonymous RSS</td><td>−1.2 MB warm, unclear cold<br><span class="mono" style="color:var(--fg-3)">cold: −0.76 … +0.51</span></td><td class="pos">−0.5 to −0.6 MB</td></tr>
+        <tr><td class="sans">Total PSS</td><td class="pos">−1.0 to −2.3 MB</td><td class="pos">−0.5 to −0.6 MB</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Sampled after the first frame. Heap figures are identical in every launch of a variant. Ranges span warm and cold. Every coloured difference has a CI that excludes zero. A16 figures are from its 576 paired rounds.</p>
+  </section>
+
+  <section>
+    <h2>Why the A16 pays when every screen loads at startup</h2>
+    <p class="prose">The cost has two parts: CPU spent defining modules on demand, warm or cold, and extra IO from the lazy bundle's bytecode layout, cold only. A third bundle separates them. It keeps the lazy bytecode but calls the segment's definer for every module as soon as the segment registers, so all 4,993 modules are defined in one batch, as in the eager bundle.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">A16, all screens at startup</th><th>Warm</th><th>Cold</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Define phase, define-all − eager</td><td>−0.2 ms<br><span class="mono" style="color:var(--fg-3)">−1.5 … +0.8</span></td><td class="neg">+6.9 ms<br><span class="mono" style="color:var(--fg-3)">+3.5 … +7.9</span></td></tr>
+        <tr><td class="sans">First import to first commit, lazy − eager</td><td class="neg">+6.9 ms<br><span class="mono" style="color:var(--fg-3)">+4.2 … +13.4</span></td><td class="neg">+12.5 ms<br><span class="mono" style="color:var(--fg-3)">+8.6 … +20.5</span></td></tr>
+        <tr><td class="sans">First import to first commit, define-all − eager</td><td>−3.3 ms<br><span class="mono" style="color:var(--fg-3)">−5.8 … +3.3</span></td><td>+0.5 ms<br><span class="mono" style="color:var(--fg-3)">−3.8 … +4.4</span></td></tr>
+        <tr><td class="sans">Bundle start to first commit, lazy − eager</td><td>+1.0 ms<br><span class="mono" style="color:var(--fg-3)">−3.4 … +5.3</span></td><td class="neg">+7.2 ms<br><span class="mono" style="color:var(--fg-3)">+1.5 … +17.3</span></td></tr>
+        <tr><td class="sans">Bundle start to first commit, define-all − eager</td><td>−3.5 ms<br><span class="mono" style="color:var(--fg-3)">−6.9 … +1.9</span></td><td class="neg">+7.5 ms<br><span class="mono" style="color:var(--fg-3)">+5.4 … +13.5</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">99 paired rounds of eager, lazy and define-all, interleaved, with medians and 95% bootstrap CIs. This run alone is too small to resolve the 4 ms warm difference between lazy and eager, which the 576-round run above does.</p>
+    <ul class="tight prose">
+      <li><strong>Defining on demand costs CPU.</strong> In one batch, defining all 4,993 modules through the segment's <code>switch</code> takes 13.1 ms, the same as the eager bundle's <code>__d</code> calls (13.2 ms). The <code>switch</code> itself is cheap: the definer has 18 registers and dispatches through a jump table. Defining the 3,000 or so modules that startup needs, one at a time on first require, adds 11.7 ms (CI 7.7–14.6 ms) between first import and first commit compared with the batch. That's about 3.9 µs per module on demand against 1.4 µs in a batch, an estimate from these medians. Whether the difference lies in the runtime's require path or in lost locality wasn't separated.</li>
+      <li><strong>The lazy layout costs about 7 ms of IO cold.</strong> Define-all pays 6.9 ms more than eager in its define phase cold, and nothing warm. That's the same total cold cost as lazy, which pays it later, during first requires. So this part comes from where the definition code sits in the bytecode, not from when modules are defined.</li>
+      <li><strong>Same pages, more reads.</strong> A system trace of 20 paired cold launches shows the lazy bundle reading only 128 KB more of the bundle in total (+0.5%), but in 11 more reads before the first commit, with the JS thread waiting on IO 7.2 ms longer (CI 4.8–8.3 ms). Eager reads its 37 pages of definition code in two forward reads, the second grown by readahead to 32 pages. The lazy segment's definer is read in five reads of 1–16 pages, mostly moving backwards through the function, because Hermes lays out the <code>switch</code> cases in reverse order and modules are required roughly in ascending ID order. That accounts for about 3 of the extra reads. The rest fall in function bytecode and the bundle's header region, and weren't attributed further.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <ul class="tight prose">
+      <li><strong>App.</strong> A synthetic React Native 0.88.0-rc.4 release app with Hermes bytecode (<code>hermesc -O</code>), React Navigation with 12 screens, Redux, React Query, Apollo, i18next and others: 5,000 modules, 9.5 MB HBC. Every screen imported at startup runs about 3,000 modules. With screens on demand, screens other than the feed are required on navigation, through inline requires in <code>getComponent</code>.</li>
+      <li><strong>Metro.</strong> Metro at <span class="mono">5cfcfe2</span> with a change that wires <code>serializer.unstable_lazilyDefineModules</code> into the server and the bundle command, installed over the app's Metro 0.87.1. Both bundles come from <code>react-native bundle</code> with the default serializer and differ only in the flag. Every module's source map positions are identical between the two.</li>
+      <li><strong>Runs.</strong> One binary per platform embeds every bundle, chosen per launch. Each round launches every combination of layout, screens mode and cache state once, in shuffled order. "Cold" evicts the bundle's pages before launch: <code>posix_fadvise(POSIX_FADV_DONTNEED)</code> on Android, <code>msync(MS_INVALIDATE)</code> on iOS. The iPhone ran 50 rounds (400 launches). The A16 ran 24 runs of 25 rounds (4,800 launches).</li>
+      <li><strong>Timing marks.</strong> Bundle start comes from a polyfill, first import from the first-imported module, and first commit from the feed screen's first <code>useLayoutEffect</code>. The <code>requestAnimationFrame</code> callback after the commit isn't used: on the A16, <code>FlatList</code>'s second batch of cells sometimes renders before it and sometimes after, making the span bimodal (about 50 or 85 ms) in a way that shifts with small timing changes. A system trace and a CPU profile confirmed that both layouts do the same work there. The A16 build counts card renders to record this, in both layouts.</li>
+      <li><strong>Statistics.</strong> Rounds pair the two layouts. Differences are medians of per-round differences with 4,000-sample bootstrap 95% CIs. Round 0 of each run is dropped as warm-up.</li>
+      <li><strong>Android investigation.</strong> Perfetto system traces (scheduler, block IO, page-cache and CPU frequency events) around 84 interleaved launches with every screen imported at startup. Bundle reads are page-cache insertions for the APK within the bundle asset's range, mapped to functions with <code>hbcdump function-info</code>. The define-all bundle is the lazy bundle with a hook that calls the segment's definer for every module ID when the segment registers.</li>
+      <li><strong>Correctness.</strong> A check mode requires all 11 deferred screens through the lazy segment after startup. It passed for every variant on both phones.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>
