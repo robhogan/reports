@@ -22,6 +22,11 @@
         "n": 1,
         "date": "2026-10-28",
         "note": "First published."
+      },
+      {
+        "n": 2,
+        "date": "2026-10-28",
+        "note": "Tie lazy re-exports to inline requires; with inlineRequires: false, re-exports keep the spec's eager evaluation order."
       }
     ]
   },
