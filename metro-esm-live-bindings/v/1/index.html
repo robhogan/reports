@@ -1,0 +1,196 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Live ES module bindings in Metro, paid for by CallRequire</title>
+<meta name="description" content="What a live-bindings design for Metro&#x27;s ES module transform costs and saves in Hermes bytecode size, startup time and memory, with CallRequire, a runtime-defined __esModule marker and lazy re-exports.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+<style>
+td.sans, th.sans { font-family: var(--font-body); }
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-10-28. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">metro · investigation</div>
+    <h1>Live ES module bindings in Metro, paid for by CallRequire</h1>
+    <p class="lede">What a live-bindings design for Metro's ES module transform costs and saves in Hermes bytecode size, startup time and memory, once it is combined with Hermes's cached <code>CallRequire</code>, a runtime-defined <code>__esModule</code> marker and lazy re-exports, measured on a 5,000-module React Native release app.</p>
+    <div class="meta">
+      <span>Metro 0.87.1, <code>experimentalImportSupport</code> and inline requires on</span><span>React Native 0.88.0-rc.4</span><span>Hermes <span class="mono">260318099.0.4</span></span><span>iPhone 12 mini, Galaxy A16</span><span>Measured 2026-10-28</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v pos">Worth building</span><span class="d">Live bindings come out smaller and faster than today's snapshot semantics, provided the bytecode savings and lazy re-exports ship with them.</span></div>
+      <div><span class="k">Bytecode size</span><span class="v pos">−3.06%</span><span class="d">−276 KB raw and −1.60% gzipped on 9.0 MB of Android HBC, against the same app with literal module IDs and no other changes.</span></div>
+      <div><span class="k">Time to first commit</span><span class="v pos">−2.4 to −2.9%</span><span class="d">−1.4 ms on the iPhone and −6.6 ms on the A16, 49 paired rounds each, both CIs clear of zero.</span></div>
+      <div><span class="k">iPhone memory</span><span class="v pos">−832 KB</span><span class="d">Physical footprint after the first frame, with 569 KB less JS allocated. On the A16, total PSS is 1.8 MB lower.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>Metro's ES module transform gives imports snapshot semantics: a binding copied once doesn't see later reassignments, and inside an import cycle it can capture <code>undefined</code>. Making bindings live costs bytes and helper calls. The design here recovers more than that cost from three changes that need the same groundwork: literal module IDs that let Hermes cache <code>require</code> results natively, a <code>__esModule</code> marker defined by the runtime from a per-module flag, and re-exports that evaluate their target on first read rather than up front.</p>
+      <p>The largest single effect on startup isn't liveness itself but laziness. Snapshot re-exports force every re-exported module to run when its barrel module runs. Live getters defer that, and in this app 35% fewer modules run before the first frame. The catch is that a re-exported module with side effects no longer runs at the moment its barrel does.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tradeoffs</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Behaviour change</span><div><span class="t">Re-exported modules run later, or not at all</span><span class="b">A lazy re-export runs its target on first read instead of when the re-exporting module runs. That is the source of the startup win, but it changes when side effects happen: about 2,100 modules ran before the first frame with eager re-exports and about 1,355 with lazy ones. Mitigation: keep eager re-exports for targets that have side effects, which needs a side-effect classification Metro doesn't have yet.</span></div></div>
+      <div class="tradeoff"><span class="sev med">3 → 30–57 ns per read</span><div><span class="t">Reading a name through a lazy re-export is slower</span><span class="b">A shared helper's getter costs 30–57 ns per read on an M-series Mac, against 3 ns for a plain data property and 20 ns for a getter emitted per name. Startup reads about 1,445 re-exported names, so the cost there is well under the time saved, but reads in hot render paths pay it every time. Resolving static reads past the re-exporting module at serialise time removes it.</span></div></div>
+      <div class="tradeoff"><span class="sev med">All-or-nothing</span><div><span class="t">Every serialiser that emits <code>__d</code> has to change with the transform</span><span class="b">Once the transform stops emitting the <code>__esModule</code> marker, a serialiser that doesn't pass the new flag breaks CommonJS interop silently. That includes HMR updates, the lazy-definition serialiser and integrators' own serialisers. One opt-in option has to gate both halves, and be part of the transform cache key.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Edge case</span><div><span class="t">CallRequire caches a module's first exports object</span><span class="b">A module that replaces <code>module.exports</code> after an importer could already read it serves the stale object from then on. In Mattermost mobile, 1,039 of 7,170 modules reassign <code>module.exports</code>; 6 sit in a dependency cycle, and none can be read before the reassignment. Such modules need an uncached require path, decided at serialise time.</span></div></div>
+      <div class="tradeoff"><span class="sev low">+8 B per module</span><div><span class="t">The flags argument costs heap if stored naively</span><span class="b">Keeping the flag as a field on each module record adds 40 KB of JS allocation for 5,000 modules. Packing it into an existing field avoids that.</span></div></div>
+      <div class="tradeoff"><span class="sev low">+0.37%</span><div><span class="t">Classifying modules as ES modules costs build time</span><span class="b">Static detection of ES module interop adds 36 ms to 9.75 s of Babel transform time across the app's 4,987 modules, single-threaded.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>The design</h2>
+    <p class="prose">The design builds on earlier proposals by Rob Hogan, opened on GitHub and closed unmerged: tri-state ES module detection (<a href="https://github.com/react/metro/pull/1862">react/metro#1862</a>), live exports and imports (<a href="https://github.com/react/metro/pull/1868">#1868</a>, <a href="https://github.com/react/metro/pull/1867">#1867</a>, <a href="https://github.com/react/metro/pull/1866">#1866</a>, <a href="https://github.com/react/metro/pull/1869">#1869</a>), and a serialise-time rewrite of default imports described in <a href="https://github.com/react/metro/pull/1865">#1865</a>. Each decision sits where its facts are: per-module facts in the transform, graph facts in the serialiser, initialisation state in the runtime.</p>
+    <ul class="tight prose">
+      <li><strong>Transform, per module and cacheable.</strong> Imports become live as in #1869: a named import reads <code>require(N).x</code> at each use, a default import reads <code>.default</code> off a namespace-shaped helper result. Reassignments of exported bindings are mirrored into <code>exports</code>, as in #1868. Each module records its tri-state ES module status, whether an export can change after initialisation, and whether its exports object can be replaced. The <code>__esModule</code> marker statement is dropped.</li>
+      <li><strong>Serialiser, whole graph.</strong> Module IDs are inlined as literals and dependency arrays are dropped (Metro's <code>serializer.unstable_inlineDependencyMap</code>). Factories are wrapped in <code>$SHBuiltin.moduleFactory</code> with their real ID, so Hermes compiles <code>require(&lt;literal&gt;)</code> to <code>CallRequire</code>. Imports of known ES modules become plain <code>require(N)</code> reads, so they get <code>CallRequire</code> too. Each <code>__d</code> call carries a flags argument: ES module, don't memoise, has async paths.</li>
+      <li><strong>Runtime.</strong> The module loader defines <code>__esModule</code> before running a flagged factory. The import helpers memoise only once a module has finished initialising, and never for flagged modules. Rarely used helpers, such as the lazy re-export helper, arrive on one extra factory parameter holding a shared object.</li>
+    </ul>
+    <p class="prose">Metro main already emits the <code>$SHBuiltin.moduleFactory</code> wrapper behind <code>customTransformOptions.unstable_staticHermesOptimizedRequire</code>, but its open-source serialiser never substitutes the real module ID for the <code>_$$_METRO_MODULE_ID</code> placeholder. That substitution is the missing piece for <code>CallRequire</code> in open-source builds.</p>
+  </section>
+
+  <section>
+    <h2>Bytecode size</h2>
+    <p class="prose">The full design is 3.06% smaller than the baseline. Dropping dependency arrays, <code>CallRequire</code> and the hoisted marker save 3.5% between them, live imports cost almost nothing, and lazy re-exports give back 0.4%. Per-name getters, as #1869 emits them, give back 2.1%.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Step</th><th>HBC</th><th>Step Δ</th><th>Total Δ</th><th>Gzipped total Δ</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Baseline: literal module IDs, dependency arrays kept</td><td>9,006,136</td><td></td><td></td><td></td></tr>
+        <tr><td class="sans">Metro's default dependency-map indexing, for reference</td><td>9,053,112</td><td></td><td class="neg">+0.52%</td><td class="neg">+0.22%</td></tr>
+        <tr class="group"><td colspan="5">The design, step by step</td></tr>
+        <tr><td class="sans">Drop dependency arrays</td><td>8,908,380</td><td class="pos">−97,756</td><td class="pos">−1.09%</td><td class="pos">−0.94%</td></tr>
+        <tr><td class="sans">+ <code>CallRequire</code></td><td>8,843,992</td><td class="pos">−64,388</td><td class="pos">−1.80%</td><td class="pos">−1.18%</td></tr>
+        <tr><td class="sans">+ rewrite imports of ES modules to <code>require(N)</code></td><td>8,845,456</td><td class="neg">+1,464</td><td class="pos">−1.78%</td><td class="pos">−1.21%</td></tr>
+        <tr><td class="sans">+ <code>__esModule</code> defined by the runtime from a <code>__d</code> flag</td><td>8,692,012</td><td class="pos">−153,444</td><td class="pos">−3.49%</td><td class="pos">−1.54%</td></tr>
+        <tr><td class="sans">+ live imports, eager snapshot re-exports</td><td>8,695,012</td><td class="neg">+3,000</td><td class="pos">−3.45%</td><td class="pos">−1.50%</td></tr>
+        <tr class="group"><td colspan="5">Re-export emission, replacing the snapshot row</td></tr>
+        <tr><td class="sans">Lazy re-exports through a shared helper (proposed)</td><td>8,730,248</td><td class="neg">+35,236</td><td class="pos">−3.06%</td><td class="pos">−1.60%</td></tr>
+        <tr><td class="sans">Lazy re-exports, one getter per name (#1869)</td><td>8,881,832</td><td class="neg">+186,820</td><td class="pos">−1.38%</td><td class="pos">−0.90%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Android Hermes bytecode in bytes, compiled with <code>hermesc -O -output-source-map</code>. Gzip at level 9. The step Δ for re-export rows is against the snapshot row. Every variant runs the bundle's prelude identically in the Hermes CLI.</p>
+    <ul class="tight prose">
+      <li><strong>The flag argument is free.</strong> Hermes compiles calls with up to four operands to <code>Call1</code>–<code>Call4</code>, which name each argument register (<code>__d(f, id, deps)</code> is a 6-byte <code>Call4</code>). A fourth argument switches to the 4-byte generic <code>Call</code>, and the constant loads it needs are mostly shared. Appending a <code>0</code> to every <code>__d</code> call alone saves 0.11–0.13%.</li>
+      <li><strong>The marker is about 33 bytes per module.</strong> 4,573 factories each start with <code>Object.defineProperty(exports, '__esModule', {value: true})</code>. Defining it in the runtime saves 1.7% raw, but only 0.3% gzipped, because the statement compresses well.</li>
+      <li><strong>The lazy re-export cost is getters.</strong> 3,402 re-exported names each become a getter. Built by one shared helper they cost 35 KB, emitted per name 187 KB.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Interaction with inline requires</h2>
+    <p class="prose">Inline requires is what makes per-call cost matter: it turns every use of an imported name into a call. With it on, this app has 20,917 <code>require</code> sites, 5,701 default-import helper sites and 1,497 namespace-import helper sites, against 11,132, 4,158 and 412 with it off. By the first commit, about 9,200 <code>require</code> calls, 8,060 default-import calls and 1,175 namespace-import calls have run.</p>
+    <ul class="tight prose">
+      <li><strong>Named imports are already live at the import site.</strong> Inline requires turns <code>x</code> into <code>require(N).x</code> at each use, so a read always sees the source module's current <code>exports.x</code>. What's missing is the producer half: the source has to update <code>exports.x</code> when it reassigns <code>x</code>.</li>
+      <li><strong>Default and namespace imports are snapshots today.</strong> Each use calls a helper that memoises its first result, even while the target module is still initialising inside a cycle. Rewriting the 92% of default-import sites and 86% of namespace-import sites whose target is an ES module to <code>require(N).default</code> and <code>require(N)</code> makes them live and lets Hermes cache them. The rest keep the helper, which memoises only once a module has finished initialising.</li>
+      <li><strong>Re-exports are not inlined.</strong> A snapshot re-export, <code>exports.x = require(N).x</code>, runs when the re-exporting module runs, so it forces its target to run too, whatever inline requires does elsewhere. A lazy getter restores the deferral inline requires is meant to provide.</li>
+      <li><strong>Memoising inline requires needs the namespace shape.</strong> With <code>unstable_memoizeInlineRequires</code>, a memoised helper result is pinned for the module's lifetime. Binding the namespace object and reading <code>.default</code> per use, as #1869 does, keeps memoisation and liveness compatible.</li>
+      <li><strong>An existing bug splits an import in two.</strong> When inline requires inlines an expression a second time, through <code>export default importedName</code> or an alias such as <code>const a = importedName</code>, Metro's plugin loses the import's source location. The second use is then treated as a <code>require</code>, and package <code>exports</code> resolve it through the <code>require</code> condition. In this app that bundled both of i18next's builds, initialised one and passed the other to React, which suspended forever on a blank screen. It affects only the ES module transform with inline requires. The fix makes the plugin's location lookup prefer the location recorded by the first inlining, as <code>collectDependencies</code> already does. It isn't upstream at the time of writing, and every measurement here uses it.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Startup on two phones</h2>
+    <p class="prose">Against the baseline, the full design reaches React's first commit 1.4 ms sooner on the iPhone (−2.4%) and 6.6 ms sooner on the A16 (−2.9%). On the iPhone, lazy re-exports account for most of it: 1.4–1.5 ms faster than eager snapshots, in 80–86% of paired rounds. On the A16, the three re-export strategies are within noise of each other.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Variant</th><th>iPhone</th><th>Δ vs baseline</th><th>Δ vs eager</th><th>A16</th><th>Δ vs baseline</th><th>Δ vs eager</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Baseline</td><td>59.5 ms</td><td></td><td></td><td>228.4 ms</td><td></td><td></td></tr>
+        <tr><td class="sans">Design, eager snapshot re-exports</td><td>59.2 ms</td><td class="pos">−0.4 ms<br><span class="mono" style="color:var(--fg-3)">−1.1 … −0.1</span></td><td></td><td>224.7 ms</td><td>−1.2 ms<br><span class="mono" style="color:var(--fg-3)">−7.5 … +2.3</span></td><td></td></tr>
+        <tr><td class="sans">Design, lazy re-exports, per-name getters</td><td>57.7 ms</td><td class="pos">−2.4 ms<br><span class="mono" style="color:var(--fg-3)">−3.0 … −1.1</span></td><td class="pos">−1.4 ms<br><span class="mono" style="color:var(--fg-3)">−2.3 … −1.0</span></td><td>224.5 ms</td><td>−2.4 ms<br><span class="mono" style="color:var(--fg-3)">−8.4 … +3.5</span></td><td>−0.1 ms<br><span class="mono" style="color:var(--fg-3)">−2.2 … +3.0</span></td></tr>
+        <tr><td class="sans">Design, lazy re-exports, shared helper (proposed)</td><td>57.8 ms</td><td class="pos">−1.4 ms<br><span class="mono" style="color:var(--fg-3)">−2.6 … −0.9</span></td><td class="pos">−1.5 ms<br><span class="mono" style="color:var(--fg-3)">−1.8 … −0.8</span></td><td>223.0 ms</td><td class="pos">−6.6 ms<br><span class="mono" style="color:var(--fg-3)">−10.3 … −2.6</span></td><td>−2.0 ms<br><span class="mono" style="color:var(--fg-3)">−4.6 … +2.7</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Bundle start to the feed screen's first <code>useLayoutEffect</code>, warm launches. Medians per variant; differences are medians of per-round differences with 95% bootstrap CIs, 49 paired rounds per phone.</p>
+    <div style="display:grid;gap:10px">
+      <h3>Memory</h3>
+      <div class="scroll"><table>
+        <thead><tr><th class="sans">Metric</th><th>Eager re-exports</th><th>Lazy, per-name getters</th><th>Lazy, shared helper</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="4">iPhone 12 mini, Δ vs baseline</td></tr>
+          <tr><td class="sans">Physical footprint</td><td class="pos">−368 KB</td><td class="pos">−736 KB</td><td class="pos">−832 KB</td></tr>
+          <tr><td class="sans">JS bytes allocated</td><td class="pos">−293 KB</td><td class="pos">−633 KB</td><td class="pos">−569 KB</td></tr>
+          <tr><td class="sans">Peak live JS heap after a GC</td><td class="pos">−286 KB</td><td class="pos">−297 KB</td><td class="pos">−288 KB</td></tr>
+          <tr><td class="sans">GC time</td><td class="pos">−0.2 ms</td><td class="pos">−0.4 ms</td><td class="pos">−0.4 ms</td></tr>
+          <tr class="group"><td colspan="4">Galaxy A16, Δ vs baseline</td></tr>
+          <tr><td class="sans">JS bytes allocated</td><td class="pos">−105 KB</td><td class="pos">−390 KB</td><td class="pos">−339 KB</td></tr>
+          <tr><td class="sans">Total PSS</td><td class="pos">−711 KB</td><td>−553 KB<br><span class="mono" style="color:var(--fg-3)">−1,663 … +679</span></td><td class="pos">−1,797 KB</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note prose">Sampled after the first frame, same rounds as above. Coloured cells have CIs that exclude zero. iPhone JS heap figures are identical in every launch of a variant. A16 allocation sits at one of two levels about 850 KB apart in each variant, so its CIs are wide even where the median shift is clear.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Runtime cost per operation</h2>
+    <p class="prose"><code>CallRequire</code> makes a cached require about 7× cheaper than a call into Metro's <code>require</code>, and the same holds for imports rewritten to <code>require(N)</code>. Getters are what cost: any accessor read is about 17 ns over a data property.</p>
+    <div class="scroll"><table>
+      <thead><tr><th class="sans">Operation</th><th>ns per use</th><th class="l">Notes</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">Imports</td></tr>
+        <tr><td>require(N).x</td><td>22.4 → 2.8–3.3</td><td class="l">Through Metro's <code>require</code>, then as <code>CallRequire</code>.</td></tr>
+        <tr><td>default import</td><td>20.9 → 3.7</td><td class="l">Memoising helper, then <code>require(N).default</code> with <code>CallRequire</code>.</td></tr>
+        <tr><td>namespace import</td><td>20.8 → 2.9</td><td class="l">Helper, then <code>require(N)</code> with <code>CallRequire</code>.</td></tr>
+        <tr><td>live default import, helper</td><td>39 / 60</td><td class="l">Non-memoising namespace-shaped helper (#1867), ES module / CommonJS target, simulated as a global function, so slightly pessimistic. Used only where the rewrite can't apply.</td></tr>
+        <tr class="group"><td colspan="3">Reading a re-exported name</td></tr>
+        <tr><td>data property</td><td>2.8–3.0</td><td class="l">Eager snapshot re-export.</td></tr>
+        <tr><td>per-name getter</td><td>20.1–20.5</td><td class="l"><code>get() { return require(N).x }</code>, with <code>CallRequire</code>.</td></tr>
+        <tr><td>shared helper getter</td><td>30–57</td><td class="l">Reads <code>metroRequire(id)[key]</code>: a real call and a computed-key read, 55–57 ns. 30 ns if the helper keeps the target's exports object once loaded, which is safe for ES modules.</td></tr>
+        <tr class="group"><td colspan="3">Helper plumbing</td></tr>
+        <tr><td>helper as factory parameter</td><td>5.4–5.6</td><td class="l">Called directly or from a nested function.</td></tr>
+        <tr><td>helper as global</td><td>6.4</td><td class="l">A global also can't be analysed by Hermes: <code>CallRequire</code> applies only to the factory's <code>require</code> parameter.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Hermes CLI at the same version as the app, interpreter, on an M-series Mac. Best of 15 timed passes of 10<sup>7</sup> uses, with Metro's real require polyfill.</p>
+    <p class="prose">At these per-call figures, the 18,400 or so require and helper calls before the first commit save about 0.3 ms of Mac time. That is an estimate from call counts and microbenchmarks, not a measurement. On the iPhone, the design with eager re-exports measures 0.4 ms faster than the baseline, which also includes the other changes.</p>
+  </section>
+
+  <section>
+    <h2>When a re-export has to be live</h2>
+    <p class="prose">An eager snapshot of a re-export equals a live read unless one of three things holds, and in this app the first applies to 0.35% of re-exports. Lazy re-exports are recommended for speed, not for these cases.</p>
+    <ul class="tight prose">
+      <li><strong>The target shares a dependency cycle with the re-exporting module.</strong> It can still be initialising when the snapshot is taken, giving <code>undefined</code>, or a partial key set for <code>export *</code>. 12 of 3,415 named re-exports and 1 of 458 <code>export *</code> loops.</li>
+      <li><strong>The target reassigns the export after initialising</strong>, directly or through a chain of re-exports.</li>
+      <li><strong>The target replaces its exports object</strong> after it could have been read.</li>
+    </ul>
+    <p class="prose">Reads that can see a partial value are rare in practice. Over a whole launch on the A16, a module whose factory was still running was read once with Metro's default transform and never with the ES module transform.</p>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <ul class="tight prose">
+      <li><strong>Substitute real module IDs in the <code>$SHBuiltin.moduleFactory</code> wrapper</strong> in the open-source serialiser, so <code>unstable_inlineDependencyMap</code> plus <code>unstable_staticHermesOptimizedRequire</code> yields <code>CallRequire</code>.</li>
+      <li><strong>Fix the inline-requires location loss</strong> first: it breaks apps with dual-build packages under the ES module transform today.</li>
+      <li><strong>Make the import helpers memoise only after initialisation completes.</strong> In release builds <code>module.factory === undefined</code> already marks that, so no new state is needed.</li>
+      <li><strong>Ship live imports with the serialise-time rewrite to <code>require(N)</code></strong> for ES module targets, and #1868's exports mirroring.</li>
+      <li><strong>Add the <code>__d</code> flags argument</strong> with a bit for ES modules, and define <code>__esModule</code> in the runtime, gated by one option across transform and every serialiser.</li>
+      <li><strong>Emit lazy re-exports through a shared runtime helper</strong>, keeping eager snapshots for targets with side effects once those can be classified. Resolve static reads past re-exporting modules at serialise time to recover data-property read speed.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <ul class="tight prose">
+      <li><strong>App.</strong> A synthetic React Native 0.88.0-rc.4 release app with Hermes bytecode: React Navigation with 12 screens, Redux, React Query, Apollo, i18next and others, about 5,000 modules. Bundled with Metro 0.87.1, <code>experimentalImportSupport</code> and inline requires on, the default <code>nonInlinedRequires</code> list, and <code>@react-native/babel-preset</code> configured with <code>disableImportExportTransform</code> so ES modules reach Metro's transform. The plugin location fix described above is applied.</li>
+      <li><strong>Variants.</strong> The design's transforms are applied by rewriting the bundle text with scripts, not by a modified Metro: inlining literal module IDs, dropping dependency arrays, wrapping factories, rewriting import helper calls, emitting re-exports as getters, and moving the marker into a flag with the matching runtime change. ES module status is read from each factory's marker. The <code>exports</code> mirroring of #1868 isn't modelled. Compiled with the app's <code>hermesc</code> (<code>-O -output-source-map</code>). Every variant renders the app on both phones.</li>
+      <li><strong>Runs.</strong> One binary per platform embeds all four bundles, chosen per launch. 50 rounds per phone, each launching every variant once in shuffled order, warm page cache. Round 0 is dropped. Differences are medians of per-round differences with 4,000-sample bootstrap 95% CIs. Time runs to the first <code>useLayoutEffect</code> rather than the next frame, because on the A16 the gap to the next frame is bimodal (about 27 ms or 60–75 ms).</li>
+      <li><strong>Counts.</strong> Separate instrumented builds log module initialisations, require and helper calls, and getter reads, in batches of 100–200 events with timestamps. Counts are to the nearest batch.</li>
+      <li><strong>Microbenchmarks.</strong> Hermes CLI built at the app's Hermes version, with the bundle's real prelude and require polyfill, a target module, and a module that reads through each form in a loop. Best of 15 passes, three repeats.</li>
+      <li><strong>Build time.</strong> The detection functions from #1862, run on each module's AST after <code>@react-native/metro-babel-transformer</code>, in one Node process, third warm pass of three.</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>
