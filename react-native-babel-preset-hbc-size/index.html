@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Which preset transforms still cost Hermes bytecode</title>
+<meta name="description" content="Each transform @react-native/babel-preset still runs for release Hermes builds, measured for bytecode size, with runtime speed and memory checked for native u-flag regexes and async functions.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../assets/report.css">
+<style>
+td:first-child { min-width: 16rem; }
+</style>
+</head>
+<body>
+<main class="page">
+  <header>
+    <div class="eyebrow">@react-native/babel-preset · investigation</div>
+    <h1>Which preset transforms still cost Hermes bytecode</h1>
+    <p class="lede">Each transform <code>@react-native/babel-preset</code> still runs for release Hermes builds, removed one at a time and measured for bytecode size, then the two biggest wins checked for runtime speed and memory in Hermes V1.</p>
+    <div class="meta">
+      <span>@react-native/babel-preset 0.88.0-rc.4</span><span>Hermes <span class="mono">hermes-v260318099.0.4</span></span><span>Apple M4 Pro, macOS</span><span>Investigated 2026-10-28</span><span><a href="#revisions">Published 2026-10-28</a></span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v pos">Drop unicode-regex</span><span class="d">Smaller in bytecode and memory, faster or within 1.3% at runtime, and Hermes V1 needs no change to support it.</span></div>
+      <div><span class="k"><code>u</code> regexes: bytecode</span><span class="v pos">−0.30 to −0.67%</span><span class="d">Whole-app HBC. Comes from a handful of <code>\p{…}</code> regexes in popular libraries.</span></div>
+      <div><span class="k"><code>u</code> regexes: memory</span><span class="v pos">−584 KB heap</span><span class="d">Live JS heap after loading highlight.js, fuse.js, path-to-regexp and zod, plus 205 KB less regex bytecode in native memory.</span></div>
+      <div><span class="k">Native async</span><span class="v neg">Size win, runtime cost</span><span class="d">−0.08 to −0.20% HBC, but up to 13% slower per awaited call, with 7–41% more allocation and 15–18% more retained memory per suspended call.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>Of the syntax transforms still active under the <code>hermes-stable</code> profile, only two move release bytecode by more than 0.1%. <code>@babel/plugin-transform-unicode-regex</code> expands every <code>\p{L}</code>-style class into kilobytes of explicit ranges and surrogate pairs. Hermes keeps each regex's source text and copies its compiled bytecode into every RegExp object it creates, so the expansion costs file size, heap and native memory. Letting Hermes compile <code>u</code> regexes natively removes 64–75 KB of HBC per app and makes regex-bound library code up to 17% faster and never more than 1.3% slower.</p>
+      <p><code>@babel/plugin-transform-async-to-generator</code> is the second-largest size win, and it scales with how much async code an app has (about 24 B per async function). But Hermes V1's native async functions are driven by a JavaScript helper that allocates three closures per <code>await</code>. That makes native async slower or no faster than Babel's lowering, and heavier, in every call pattern measured except closures created per render. Preserving async is worth it for size only after Hermes optimises that helper.</p>
+    </div>
+  </section>
+
+  <section id="tradeoffs">
+    <h2>Tradeoffs</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Up to 13% slower</span><div><span class="t">Native async functions are slower per call than Babel's lowering</span><span class="b">Measured on awaited calls of async declarations, methods, chains, loops of awaits, rejections and <code>Promise.all</code>, in both heap layouts. Async methods are the mildest case (+0.6% to +3.2%). Allocation per call rises 7–41%, about 270–530 B per <code>await</code>. Async arrows created during a render are the exception: creating one is about 50% cheaper natively, and create-plus-call is 6–7% faster.</span></div></div>
+      <div class="tradeoff"><span class="sev med">+144 to +304 B</span><div><span class="t">Each suspended native async call retains more memory</span><span class="b">A two-deep async call blocked on a pending promise retains 1,127 B natively vs 983 B lowered with Android's heap layout (+15%), and 2,029 B vs 1,725 B with the 64-bit layout (+18%).</span></div></div>
+      <div class="tradeoff"><span class="sev med">Needs a Hermes flag</span><div><span class="t">Preserving <code>let</code>/<code>const</code> is only correct with <code>-Xes6-block-scoping</code></span><span class="b">Without the flag, hermesc compiles <code>let</code> and <code>const</code> with <code>var</code> semantics, so closures created in loops all see the final value. React Native's release builds don't pass the flag. With it, reassigning a <code>const</code>, even in dead code, is a compile error rather than the runtime <code>TypeError</code> the spec requires. Size gain if solved: −0.11%.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Edge case</span><div><span class="t">Native <code>u</code> regexes follow the engine's Unicode version</span><span class="b">Babel bakes in its own Unicode data (Unicode 18 at <span class="mono">regenerate-unicode-properties@10.3.0</span>). Hermes V1 and Node 26 both use Unicode 17. Across every code point, the native and lowered forms of all 9 affected regexes differ only on characters that Unicode 18 assigns and Unicode 17 doesn't.</span></div></div>
+      <div class="tradeoff"><span class="sev low">1% slower</span><div><span class="t">One <code>u</code> regex workload is marginally slower natively</span><span class="b">Compiling 30 routes with <code>path-to-regexp</code> 8 is 1.0–1.3% slower with native <code>\p{ID_Start}</code>/<code>\p{ID_Continue}</code> character tests. It still saves 42 KB of HBC and 37 KB of heap.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the preset still lowers for Hermes</h2>
+    <div class="prose stack">
+      <p>Under <code>hermes-stable</code> in release, the 0.88 preset already preserves classes, class properties, generators, <code>for…of</code>, optional chaining and nullish coalescing. <code>hermes-canary</code> is currently identical. These syntax transforms still run on every file or every matching file, besides those that are always required (JSX, Flow, TypeScript, CommonJS modules, <code>export default from</code>):</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Plugin</th><th class="l">Lowers</th><th class="l">Existing opt-out</th></tr></thead>
+      <tbody>
+        <tr><td>transform-unicode-regex</td><td class="l"><code>u</code>-flag regexes, including <code>\p{…}</code>, to non-<code>u</code> regexes with explicit ranges and surrogate pairs</td><td class="l">None</td></tr>
+        <tr><td>transform-async-to-generator</td><td class="l">Async functions to generators driven by the <code>asyncToGenerator</code> helper</td><td class="l"><code>unstable_preserveAsync</code></td></tr>
+        <tr><td>transform-async-generator-functions</td><td class="l">Async generators and <code>for await</code></td><td class="l"><code>unstable_preserveAsync</code></td></tr>
+        <tr><td>transform-block-scoping</td><td class="l"><code>let</code>/<code>const</code> to <code>var</code>, with per-iteration <code>_loop</code> functions and <code>_readOnlyError()</code></td><td class="l"><code>unstable_preserveBlockScoping</code></td></tr>
+        <tr><td>transform-private-methods, transform-private-property-in-object</td><td class="l"><code>#x</code> members and <code>#x in obj</code> to loose-mode string keys</td><td class="l"><code>unstable_preserveClassPrivate</code></td></tr>
+        <tr><td>transform-named-capturing-groups-regex</td><td class="l"><code>(?&lt;name&gt;…)</code> to <code>_wrapRegExp()</code></td><td class="l">None</td></tr>
+        <tr><td>transform-destructuring</td><td class="l">Destructuring declarations and assignments</td><td class="l"><code>unstable_preserveDestructuring</code> (react/react-native#58965)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">The preset has no class static block support. With classes preserved, the private-member plugins throw "Static class blocks are not enabled" on any class with a <code>static {}</code> block (three.js has some), so apps must add <code>@babel/plugin-transform-class-static-block</code> themselves.</p>
+  </section>
+
+  <section>
+    <h2>Bytecode size of each transform</h2>
+    <div class="prose stack">
+      <p>Removing <code>unicode-regex</code> is worth 0.3–0.7% of release HBC, and async 0.1–0.2%. Everything else is within ±0.11%, and preserving private members or destructuring makes the bytecode slightly bigger. Section-level deltas confirm each change sits where the transform acts, with no knock-on operand-width changes elsewhere.</p>
+    </div>
+    <div style="display:grid;gap:10px">
+      <h3>Test app (RN 0.88, ~5,000 modules, 9,526,832 B HBC)</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Plugin removed</th><th>HBC Δ</th><th>HBC Δ %</th><th>gzip Δ</th><th class="l">Where</th></tr></thead>
+        <tbody>
+          <tr><td>unicode-regex</td><td class="pos">−64,012</td><td class="pos">−0.67%</td><td class="pos">−8,046</td><td class="l">String storage −55,444, regex bytecode −7,994</td></tr>
+          <tr><td>block-scoping (with <code>-Xes6-block-scoping</code>)</td><td class="pos">−10,520</td><td class="pos">−0.11%</td><td class="pos">−5,497</td><td class="l">Function bodies −8,176, function info −1,720</td></tr>
+          <tr><td>async-to-generator</td><td class="pos">−7,220</td><td class="pos">−0.08%</td><td class="pos">−2,314</td><td class="l">Function bodies −5,892, function info −1,300</td></tr>
+          <tr><td>+ async-generator-functions (with <code>-Xasync-generators</code>)</td><td class="pos">−7,256</td><td class="pos">−0.08%</td><td class="pos">−2,579</td><td class="l">On top of the row above, mostly helper modules</td></tr>
+          <tr><td>class-static-block (app config)</td><td class="pos">−660</td><td>−0.01%</td><td class="pos">−388</td><td class="l">Only possible with private members preserved</td></tr>
+          <tr><td>named-capturing-groups-regex</td><td>0</td><td>0.00%</td><td>+7</td><td class="l">No sites in this app</td></tr>
+          <tr><td>private-methods + private-property-in-object</td><td class="neg">+2,396</td><td class="neg">+0.03%</td><td class="pos">−970</td><td class="l">Function bodies +3,176</td></tr>
+          <tr><td>destructuring</td><td class="neg">+2,572</td><td class="neg">+0.03%</td><td class="neg">+3,204</td><td class="l">Function bodies +3,884, literal buffers −1,496</td></tr>
+          <tr class="group"><td colspan="5">Combined</td></tr>
+          <tr><td>All without a hermesc flag</td><td class="pos">−78,344</td><td class="pos">−0.82%</td><td class="pos">−11,699</td><td class="l">unicode, async, private, static block, named groups</td></tr>
+          <tr><td>+ block scoping, destructuring</td><td class="pos">−84,508</td><td class="pos">−0.89%</td><td class="pos">−12,382</td><td class="l">With <code>-Xes6-block-scoping</code></td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <div style="display:grid;gap:10px">
+      <h3>Mattermost mobile (25,213,060 B HBC)</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Plugin removed</th><th>HBC Δ</th><th>HBC Δ %</th><th>gzip Δ</th><th class="l">Where</th></tr></thead>
+        <tbody>
+          <tr><td>unicode-regex</td><td class="pos">−75,184</td><td class="pos">−0.30%</td><td class="pos">−33,027</td><td class="l">String storage −66,968, regex bytecode −8,792</td></tr>
+          <tr><td>async-to-generator</td><td class="pos">−51,216</td><td class="pos">−0.20%</td><td class="pos">−8,861</td><td class="l">2,101 async functions. Function bodies −50,996, function info −7,960, string storage +10,506</td></tr>
+          <tr><td>block-scoping (with <code>-Xes6-block-scoping</code>)</td><td class="pos">−27,972</td><td class="pos">−0.11%</td><td class="pos">−11,607</td><td class="l"></td></tr>
+          <tr><td>named-capturing-groups-regex</td><td>0</td><td>0.00%</td><td>+8</td><td class="l">No sites</td></tr>
+          <tr><td>All three without a flag</td><td class="pos">−125,600</td><td class="pos">−0.50%</td><td class="pos">−42,038</td><td class="l">unicode, async, named groups</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+    <p class="note prose">Bytes of release Android HBC, from <code>hermesc -O</code>. Mattermost bundles with its own, older preset, so it serves only as a second, async-heavy body of code: only the plugin under test differs between each pair, and private members can't be preserved because that preset still lowers classes. The <code>u</code>-regex saving comes from highlight.js (xml and python grammars), fuse.js and zod 4 in the test app, and from path-to-regexp 8, commonmark, zod 4 and the app's own markdown and autocomplete code in Mattermost. Named groups are roughly neutral by construction: <code>_wrapRegExp</code> costs about 3.3 KB once, after which each lowered site is about 90 B smaller than native.</p>
+  </section>
+
+  <section>
+    <h2>Does Hermes V1 run the untransformed syntax?</h2>
+    <div class="prose stack">
+      <p>Yes for everything except <code>let</code>/<code>const</code> and async generators, which need compiler flags React Native doesn't pass today. Each feature was compiled with <code>hermesc -O</code>, run in the <code>hermes</code> VM and compared line by line with Node 26.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Syntax</th><th class="l">Result</th></tr></thead>
+      <tbody>
+        <tr><td>async / await</td><td class="l pos">Correct. Covers <code>arguments</code>, <code>this</code> in async arrows, <code>for await</code> inside async functions, and rejection propagation.</td></tr>
+        <tr><td>async function*</td><td class="l neg">"async generators are unsupported" unless compiled with <code>-Xasync-generators</code>. With it, correct.</td></tr>
+        <tr><td><code>u</code> regexes, <code>\p{…}</code></td><td class="l pos">Correct, including astral <code>.</code>, <code>\p{Script=Greek}</code>, <code>\p{XID_Start}</code> and Unicode case folding. Equivalent to the lowered form except for Unicode-version skew.</td></tr>
+        <tr><td>Named groups</td><td class="l pos">Correct: <code>.groups</code>, <code>$&lt;name&gt;</code>, function replacers, <code>\k&lt;name&gt;</code>.</td></tr>
+        <tr><td><code>#private</code>, <code>#x in obj</code></td><td class="l pos">Correct, including brand-check <code>TypeError</code>s. More faithful than loose-mode lowering, which exposes private state as properties.</td></tr>
+        <tr><td><code>static {}</code></td><td class="l pos">Correct.</td></tr>
+        <tr><td><code>let</code> / <code>const</code></td><td class="l neg">Compiled as <code>var</code> without <code>-Xes6-block-scoping</code>. With it, loop bindings are correct, but <code>const</code> reassignment is a compile error, and TDZ isn't checked (Babel doesn't check it either).</td></tr>
+      </tbody>
+    </table></div>
+  </section>
+
+  <section>
+    <h2>Native <code>u</code> regexes at runtime</h2>
+    <div class="prose stack">
+      <p>Native compilation makes the affected libraries smaller in memory and as fast or faster, apart from a 1% slowdown in <code>path-to-regexp</code>. A bundle of just the four libraries that carry such regexes is 999,805 B of HBC lowered and 894,376 B native (−10.5%). After loading them and using each once, the live JS heap is 584 KB smaller and regex bytecode in native memory is 205 KB smaller.</p>
+      <p>The mechanism is in how Hermes stores regexes. Each RegExp object keeps its source string and a private <code>malloc</code>'d copy of its compiled bytecode (<code>JSRegExp::initializeBytecode</code>), so a large expansion is paid in every live RegExp, not just in the file. highlight.js is the extreme case: it concatenates grammar regexes' <code>.source</code> strings and compiles the results at runtime with <code>new RegExp</code>. For two languages, the expanded classes cost 572 KB of heap, 204 KB of regex bytecode and 5.3–5.6 MB of peak RSS, and add about 4.5 ms to the first highlight on an M4 Pro.</p>
+    </div>
+    <div style="display:grid;gap:10px">
+      <h3>Memory after load and first use</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Library</th><th>Live heap, lowered</th><th>Live heap, native</th><th>Δ</th><th>Regex bytecode Δ</th><th>Peak RSS Δ</th></tr></thead>
+        <tbody>
+          <tr><td>highlight.js 11 (xml, python)</td><td>946,896</td><td>374,424</td><td class="pos">−572,472</td><td class="pos">−203,621</td><td class="pos">−5.6 MB</td></tr>
+          <tr><td>path-to-regexp 8</td><td>228,336</td><td>190,872</td><td class="pos">−37,464</td><td class="pos">−4,418</td><td>−0.1 MB</td></tr>
+          <tr><td>fuse.js 7 (token search)</td><td>236,472</td><td>225,840</td><td class="pos">−10,632</td><td class="pos">−1,195</td><td>0.0 MB</td></tr>
+          <tr><td>zod 4 (<code>unicodeEmail</code>)</td><td>716,600</td><td>716,144</td><td>−456</td><td>−484</td><td>−0.1 MB</td></tr>
+          <tr class="group"><td colspan="6">All four together</td></tr>
+          <tr><td>Android heap layout</td><td>2,231,160</td><td>1,647,536</td><td class="pos">−583,624</td><td class="pos">−205,304</td><td class="pos">−2.9 MB</td></tr>
+          <tr><td>64-bit heap layout</td><td>2,985,200</td><td>2,401,560</td><td class="pos">−583,640</td><td class="pos">−205,304</td><td class="pos">−2.6 MB</td></tr>
+        </tbody>
+      </table></div>
+      <p class="note prose">Bytes after a full GC (<code>hermes -gc-before-stats -gc-print-stats</code>: "Allocated bytes" and "Malloc size"), median of 10 runs per variant. Per-library rows use the Android layout for highlight.js and the 64-bit layout for the rest; string and regex bytecode savings don't depend on the layout. Cold timings (ms resolution, median of 10): module init 25 → 21 ms, first highlight of both languages 12.5 → 8 ms.</p>
+    </div>
+    <div style="display:grid;gap:10px">
+      <h3>Steady-state speed</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Workload</th><th>Lowered (<span style="text-transform:none">µs</span>)</th><th>Native (<span style="text-transform:none">µs</span>)</th><th>Δ, Android layout (95% CI)</th><th>Δ, 64-bit layout (95% CI)</th></tr></thead>
+        <tbody>
+          <tr><td>fuse.js index build, 1,000 items</td><td>21,167</td><td>17,833</td><td class="pos">−15.7%<br><span class="mono" style="color:var(--fg-3)">−17.1 … −15.7</span></td><td class="pos">−17.1%<br><span class="mono" style="color:var(--fg-3)">−17.4 … −16.7</span></td></tr>
+          <tr><td>zod <code>unicodeEmail</code>, 200 addresses</td><td>181.0</td><td>157.6</td><td class="pos">−12.9%<br><span class="mono" style="color:var(--fg-3)">−13.7 … −12.3</span></td><td class="pos">−13.8%<br><span class="mono" style="color:var(--fg-3)">−14.1 … −13.3</span></td></tr>
+          <tr><td>highlight.js, 4 KB of XML</td><td>5,396</td><td>5,115</td><td class="pos">−5.2%<br><span class="mono" style="color:var(--fg-3)">−6.0 … −4.3</span></td><td class="pos">−6.1%<br><span class="mono" style="color:var(--fg-3)">−7.1 … −5.5</span></td></tr>
+          <tr><td>highlight.js, 3 KB of Python</td><td>5,302</td><td>5,333</td><td>+0.6%<br><span class="mono" style="color:var(--fg-3)">−0.4 … +1.0</span></td><td>−0.4%<br><span class="mono" style="color:var(--fg-3)">−1.2 … +1.2</span></td></tr>
+          <tr><td>fuse.js token search</td><td>75,500</td><td>76,000</td><td>+0.7%<br><span class="mono" style="color:var(--fg-3)">−0.4 … +1.6</span></td><td>0.0%<br><span class="mono" style="color:var(--fg-3)">−0.7 … +0.9</span></td></tr>
+          <tr><td>path-to-regexp, compile 30 routes</td><td>1,000</td><td>1,010</td><td class="neg">+1.0%<br><span class="mono" style="color:var(--fg-3)">+0.5 … +1.8</span></td><td class="neg">+1.3%<br><span class="mono" style="color:var(--fg-3)">+1.1 … +2.1</span></td></tr>
+        </tbody>
+      </table></div>
+      <p class="note prose">Time per operation, Android-layout medians shown. 10 interleaved processes per variant, median of 5 samples per process. CI is a 2,000-resample bootstrap of the ratio of medians. Inputs mix ASCII with accented, Greek, Cyrillic and CJK words.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Native async functions at runtime</h2>
+    <div class="prose stack">
+      <p>Native async is up to 13% slower than Babel's lowering for awaited calls (5–13% for all but method calls) and allocates 7–41% more, in both heap layouts. The cause is how Hermes V1 implements async functions. The compiler turns an async function into an internal generator and hands it to <code>spawnAsync</code>, a plain JavaScript function in Hermes's internal bytecode (<code>lib/InternalJavaScript/02-AsyncFn.js</code>). For every <code>await</code>, that helper creates a fresh resolve closure, a fresh reject closure and a thunk for the next step, and always wraps the awaited value in <code>Promise.resolve</code>. Babel's <code>asyncToGenerator</code> creates its <code>_next</code> and <code>_throw</code> callbacks once per call and reuses them for every <code>await</code>.</p>
+      <p>Async arrows created per render go the other way. Babel lowers them to an IIFE that calls <code>asyncToGenerator</code>, plus an inline <code>require</code> of the helper, each time the arrow is created. Native creation is one closure, about half the cost, and create-plus-call is 6–7% faster. React components create many such closures (<code>useCallback</code> and <code>useEffect</code> bodies), so the net effect in a real app depends on its mix. Only the per-call cost is measured here.</p>
+    </div>
+    <pre>function spawn(genF, self, args) {
+  return new HermesPromise(function (resolve, reject) {
+    var gen = genF.apply(self, args);
+    function step(nextF) {
+      …
+      HermesPromiseResolve(next.value).then(
+        function (v) { step(function () { return gen.next(v); }); },
+        function (e) { step(function () { return gen.throw(e); }); }
+      );
+    }
+    step(function () { return gen.next(undefined); });
+  });
+}</pre>
+    <div class="scroll"><table>
+      <thead><tr><th>Workload</th><th>Lowered (<span style="text-transform:none">µs</span>)</th><th>Native (<span style="text-transform:none">µs</span>)</th><th>Δ, Android layout (95% CI)</th><th>Δ, 64-bit layout (95% CI)</th><th>Allocated per op, lowered → native</th></tr></thead>
+      <tbody>
+        <tr><td>reject + catch</td><td>2.49</td><td>2.81</td><td class="neg">+12.9%<br><span class="mono" style="color:var(--fg-3)">+12.2 … +13.5</span></td><td class="neg">+12.4%<br><span class="mono" style="color:var(--fg-3)">+11.0 … +13.8</span></td><td>2,040 → 2,816 B</td></tr>
+        <tr><td>await async declaration</td><td>0.78</td><td>0.83</td><td class="neg">+7.2%<br><span class="mono" style="color:var(--fg-3)">+6.5 … +7.9</span></td><td class="neg">+7.9%<br><span class="mono" style="color:var(--fg-3)">+7.4 … +8.8</span></td><td>784 → 1,032 B</td></tr>
+        <tr><td>10 awaits in one function</td><td>8.61</td><td>9.11</td><td class="neg">+5.9%<br><span class="mono" style="color:var(--fg-3)">+5.2 … +6.6</span></td><td class="neg">+7.5%<br><span class="mono" style="color:var(--fg-3)">+6.4 … +8.0</span></td><td>8,696 → 11,424 B</td></tr>
+        <tr><td>3-level chain, 7 calls</td><td>5.69</td><td>5.96</td><td class="neg">+4.8%<br><span class="mono" style="color:var(--fg-3)">+4.5 … +5.4</span></td><td class="neg">+7.3%<br><span class="mono" style="color:var(--fg-3)">+6.0 … +7.7</span></td><td>5,656 → 7,392 B</td></tr>
+        <tr><td>Promise.all of 100 calls</td><td>59.57</td><td>62.50</td><td class="neg">+4.9%<br><span class="mono" style="color:var(--fg-3)">+4.1 … +5.5</span></td><td class="neg">+5.1%<br><span class="mono" style="color:var(--fg-3)">+2.8 … +6.6</span></td><td>71,560 → 82,352 B</td></tr>
+        <tr><td>await async method</td><td>0.85</td><td>0.85</td><td>+0.6%<br><span class="mono" style="color:var(--fg-3)">−0.3 … +1.2</span></td><td class="neg">+3.2%<br><span class="mono" style="color:var(--fg-3)">+2.5 … +4.5</span></td><td>968 → 1,040 B</td></tr>
+        <tr><td>render: create + call async arrow</td><td>1.34</td><td>1.24</td><td class="pos">−7.4%<br><span class="mono" style="color:var(--fg-3)">−8.3 … −7.3</span></td><td class="pos">−6.0%<br><span class="mono" style="color:var(--fg-3)">−6.8 … −5.2</span></td><td>1,336 → 1,472 B</td></tr>
+        <tr><td>render: create async arrow only</td><td>0.05</td><td>0.02</td><td class="pos">−49.4%<br><span class="mono" style="color:var(--fg-3)">−49.8 … −49.0</span></td><td class="pos">−50.7%<br><span class="mono" style="color:var(--fg-3)">−51.0 … −50.3</span></td><td></td></tr>
+        <tr class="group"><td colspan="6">Retained memory</td></tr>
+        <tr><td>Suspended two-deep call, Android layout</td><td colspan="2">983 → 1,127 B</td><td class="neg">+14.7%</td><td></td><td class="l">10,000 calls blocked on a pending promise, live heap after full GC minus a baseline</td></tr>
+        <tr><td>Suspended two-deep call, 64-bit layout</td><td colspan="2">1,725 → 2,029 B</td><td></td><td class="neg">+17.6%</td><td></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Android-layout medians shown, measured the same way as the regex workloads. Allocation is <code>js_totalAllocatedBytes</code> per operation, Android layout. The lowered side is real preset output: <code>@babel/runtime</code> CommonJS helpers with Metro's inline requires, so each use of the helper is a <code>require()</code> call, as in shipping apps. Both sides use Hermes's built-in <code>Promise</code> with the microtask queue on, as React Native 0.88 does. Absolute times are for an M4 Pro, and phones will be several times slower. The relative differences come from extra allocation and calls in the interpreter, so similar ratios are likely on devices (inference, not measured).</p>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <ul class="tight prose">
+      <li><strong>Stop running <code>transform-unicode-regex</code> under the Hermes profiles.</strong> Keep it for the <code>default</code> profile. It is the one change that wins on size and memory with no meaningful runtime cost: −0.3 to −0.7% HBC, hundreds of KB less heap in apps using highlight.js-style runtime regex building, and up to 17% faster regex-heavy library code.</li>
+      <li><strong>Hold <code>unstable_preserveAsync</code> for release until Hermes's async driver is cheaper.</strong> The size win is real (about 24 B per async function), but today it costs up to 13% per awaited call and 15–18% more retained memory per suspended call. Rewriting <code>spawnAsync</code> to reuse its step callbacks the way Babel's helper does looks like the fix (inference from the source, not prototyped).</li>
+      <li><strong>Treat block scoping as a Hermes question.</strong> −0.11% everywhere, but it needs <code>-Xes6-block-scoping</code> in React Native's Android and iOS compile steps, and a decision on <code>const</code> reassignment being a compile error.</li>
+      <li><strong>Leave private members, named groups and destructuring as they are, as far as size goes.</strong> Each is neutral or slightly bigger when preserved. Any case for preserving them rests on correctness or speed, not size.</li>
+      <li><strong>Add class static block support to the preset</strong>, so apps don't need their own <code>transform-class-static-block</code> when they depend on a library like three.js.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <p><strong>Bytecode size.</strong> A test app on React Native 0.88.0-rc.4: about 5,000 modules, 9.5 MB of HBC, with React Navigation, Redux, React Query, Apollo Client, i18next, highlight.js, fuse.js, zod and three.js among its dependencies. The installed preset was patched to filter named plugins out of its returned config, so each variant differs from the baseline by exactly one plugin. Bundles: <code>react-native bundle --platform android --dev false --minify false --unstable-transform-profile hermes-stable --reset-cache</code>. Compilation: <code>hermesc -emit-binary -O -output-source-map</code>, as React Native's Android release build runs it. Block-scoping variants are compared against a baseline also compiled with <code>-Xes6-block-scoping</code>; the flag alone changes the baseline by 8 B. Every bundle was smoke-tested in the <code>hermes</code> VM, and section sizes come from <code>hbcdump -show-section-ranges</code>. Mattermost mobile was patched and measured the same way with its own preset.</p>
+      <p><strong>Correctness.</strong> A feature snippet per transform, compiled with <code>hermesc -O</code>, run in <code>hermes</code> and diffed against Node 26.11.1. For <code>u</code> regexes, each of the 9 regexes the transform changes in the test app was run natively and in its Babel-lowered form over every code point, as four probe strings each, in both Hermes and Node.</p>
+      <p><strong>Runtime.</strong> Small entry bundles (one per workload set) built through the same Metro pipeline and preset, with and without the plugin, then run in the <code>hermes</code> CLI at the same tag on an Apple M4 Pro. Two VM builds were used: the default 64-bit heap layout, and Android's layout (<code>HERMESVM_HEAP_HV_MODE=HEAP_HV_PREFER32</code> with a contiguous heap: compressed pointers and boxed doubles). Timing uses <code>Date.now()</code>, so each sample runs at least 150 ms. The machine was shared with other work, which the interleaving and bootstrap CIs account for. Phone measurements are a follow-up.</p>
+    </div>
+    <details class="prose"><summary>Async workloads</summary><pre>async function leaf(x) { return x + 1; }
+async function mid(x) { return (await leaf(x)) + (await leaf(x)); }
+async function top(x) { return (await mid(x)) + (await mid(x)); }
+async function loop10(x) { let s = 0; for (let i = 0; i &lt; 10; i++) s += await leaf(i + x); return s; }
+async function rejects() { await null; throw new Error('x'); }
+async function catches() { try { await rejects(); } catch (e) { return 1; } return 0; }
+async function all100() { const ps = []; for (let i = 0; i &lt; 100; i++) ps.push(leaf(i)); return (await Promise.all(ps)).length; }
+class Store { constructor() { this.v = 1; } async get(k) { return this.v + k; } }
+function render(props) {
+  const onPress = async () =&gt; { await null; return props.id; };
+  return onPress;
+}
+
+// Retained memory: 10,000 of these, blocked on a promise that never settles.
+const never = (globalThis.never = new Promise(() =&gt; {}));
+async function inner(i) { const r = await never; return r + i; }
+async function outer(i) { return (await inner(i)) + 1; }</pre></details>
+    <details class="prose"><summary>Regex workloads</summary><pre>hljs.highlight(xml, {language: 'xml'});            // 40 elements with namespaced tags and attributes
+hljs.highlight(py, {language: 'python'});          // 30 functions with non-ASCII identifiers
+new Fuse(items, {keys: ['title', 'body'], useTokenSearch: true});  // 1,000 items
+fuse.search(phrase(2));
+routes.map(r =&gt; match(r));                         // '/org/:orgId/team-N/:teamId/channel/:channelId{/:postId}/file-N/*rest'
+emails.filter(e =&gt; z.email({pattern: z.regexes.unicodeEmail}).safeParse(e).success);</pre></details>
+  </section>
+
+  <section id="revisions">
+    <h2>Revisions</h2>
+    <div class="scroll"><table class="revisions">
+      <thead><tr><th>Revision</th><th>Date</th><th class="l">Change</th></tr></thead>
+      <tbody>
+        <tr><td><a href="v/1/">1</a></td><td>2026-10-28</td><td class="l">First published.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Each revision links to a frozen copy of the report as it was published. The <a href="https://github.com/robhogan/reports/commits/main/react-native-babel-preset-hbc-size">commit history</a> has every edit.</p>
+  </section>
+</main>
+</body>
+</html>

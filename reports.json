@@ -98,6 +98,19 @@
     ]
   },
   {
+    "slug": "react-native-babel-preset-hbc-size",
+    "title": "Which preset transforms still cost Hermes bytecode",
+    "description": "Each transform @react-native/babel-preset still runs for release Hermes builds, measured for bytecode size, with runtime speed and memory checked for native u-flag regexes and async functions.",
+    "date": "2026-10-28",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-10-28",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "react-native-regenerator-removal",
     "title": "Removing regenerator from Hermes dev builds",
     "description": "Whether @react-native/babel-preset still needs regenerator in Hermes dev builds now that Hermes 260318099.0.2 fixed generator breakpoints: version history, a breakpoint-by-breakpoint comparison of 248 lines, and the native-generator bugs that remain.",
