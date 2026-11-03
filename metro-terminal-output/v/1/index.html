@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Terminal output and Metro&#x27;s main thread</title>
+<meta name="description" content="How much main-thread time terminal output takes during cold and warm Metro builds, when a terminal can hold a build back, and what react/metro#2162 changes.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-11-03. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">react/metro · investigation</div>
+    <h1>Terminal output and Metro's main thread</h1>
+    <p class="lede">How much main-thread time terminal output takes during cold and warm Metro builds, when a terminal can hold a build back, and what <a href="https://github.com/react/metro/pull/2162">react/metro#2162</a> changes, measured on real dev-server builds of Mattermost through real PTYs and terminal emulators.</p>
+    <div class="meta">
+      <span>Metro 0.87.1, <code>Terminal.js</code> from <span class="mono">cddcf36</span> and PR <span class="mono">8f027e2</span></span><span>Mattermost mobile <span class="mono">ad6b834</span>, 7,316 modules</span><span>Node 24.21.0, macOS, M4 Pro, 8 workers</span><span>Measured 2026-11-03</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Progress bar, warm build</span><span class="v pos">0.04%</span><span class="d">0.5 ms of writes in 1,189 ms of main-thread work, on a main thread that is 97% busy. 0.13% in a cold build.</span></div>
+      <div><span class="k">Log lines, warm build</span><span class="v">13–34 µs each</span><span class="d">Added build time per line in real terminals and a fast PTY. 7,317 lines add 94–248 ms to a 1.2 s build.</span></div>
+      <div><span class="k">Stalled terminal</span><span class="v neg">Blocks the build</span><span class="d">A 5 s pause adds 4.5 s to a warm build, all of it inside one <code>write</code> call.</span></div>
+      <div><span class="k">react/metro#2162</span><span class="v">Neutral unless logging</span><span class="d">No measurable change without log lines. +0–7% on a warm build logging one line per module.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>The progress bar isn't a meaningful cost, even in a warm build, where the main thread is the bottleneck and each millisecond of writes adds a millisecond of build time. Its writes are driven by a timer rather than by module count, so they stay at about 0.5 ms per second of build however busy the main thread is.</p>
+      <p>Two things do cost main-thread time: log lines, which scale with how much is logged, and terminals that stop reading, because TTY writes block the main thread on POSIX. Every terminal measured reads at least 1,500× faster than the progress bar needs, so stalls and very slow links are the realistic risk, not terminal speed. <a href="https://github.com/react/metro/pull/2162">react/metro#2162</a> makes log lines slightly more expensive and leaves the progress bar unchanged.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The progress bar's cost in a normal build</h2>
+    <div class="prose stack">
+      <p>Terminal writes take 0.04% of main-thread time in a warm build and 0.13% in a cold one. Including everything else the reporter does, such as handling 14,638 progress events and formatting status lines, the totals are 0.25% and 0.37%.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Build</th><th>Build time</th><th>Main thread busy</th><th>Stream writes</th><th>Write time, % of busy</th><th>Reporter time, % of busy</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Warm</td><td>1,224 ms</td><td>1,189 ms (97%)</td><td>28</td><td class="pos">0.5 ms (0.04%)</td><td class="pos">3.0 ms (0.25%)</td></tr>
+        <tr><td class="sans">Cold</td><td>9,998 ms</td><td>5,684 ms (57%)</td><td>286</td><td class="pos">7.2 ms (0.13%)</td><td class="pos">21.2 ms (0.37%)</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Dev bundle through a PTY with a fast reader, on the PR. Medians of 16 warm and 24 cold runs. Busy time is event-loop utilisation over the build. The build makes 15 status updates when warm and 100 when cold. Reporter time includes status formatting and the synchronous part of each write.</p>
+    <div class="prose stack">
+      <p>A warm build doesn't make the progress bar relatively more expensive. The reporter throttles progress to one update per 100 ms, and each redraw is three short writes (move cursor, clear, status line), so the cost follows wall time rather than work done. In both build types that's about 0.4–0.7 ms of writes per second. What the warm build changes is how directly those writes reach build time, because a main thread that is 97% busy has no slack to absorb them.</p>
+      <p>Removing terminal output doesn't measurably change build time. Real emulators agree: warm builds spend 0.4–0.5 ms in writes in the app terminal, kitty and Terminal.app, and cold builds 5–11 ms.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Build</th><th>PTY</th><th>stdout to a file</th><th>No reporter</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Warm</td><td>1,434 ms</td><td>1,434 ms</td><td>1,436 ms</td></tr>
+        <tr><td class="sans">Cold</td><td>9,968 ms</td><td>9,955 ms</td><td>9,949 ms</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Medians of 16 warm and 8 cold runs, in a fixed rotation of the arms. Compare within a table only: batches ran at different times on a shared machine, which is why this table's warm times differ from the one above.</p>
+  </section>
+
+  <section>
+    <h2>Log lines are what cost main-thread time</h2>
+    <div class="prose stack">
+      <p>Each line logged from the main thread during a warm build adds 13–34 µs. Without a worker in the path, that time comes straight out of the build: 7,317 lines add 94–248 ms, or 8–20%. Most of it isn't the write. With the fast PTY reader on the PR, 7,317 lines spend 30 ms in writes and 129 ms in the reporter, which formats each line and recomputes the status line.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Terminal</th><th>No lines</th><th>732 lines</th><th>7,317 lines</th><th>Added per line, main</th><th>Added per line, PR</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">PTY, fast reader</td><td>1,228 ms</td><td>1,244 ms</td><td>1,322 ms</td><td>13 µs</td><td>21 µs</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>1,237 ms</td><td>1,254 ms</td><td>1,383 ms</td><td>20 µs</td><td>34 µs</td></tr>
+        <tr><td class="sans">kitty</td><td>1,264 ms</td><td>1,287 ms</td><td>1,431 ms</td><td>23 µs</td><td>27 µs</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>1,250 ms</td><td>1,275 ms</td><td>1,460 ms</td><td>29 µs</td><td>28 µs</td></tr>
+        <tr><td class="sans">stdout to a file</td><td>1,229 ms</td><td>–</td><td>1,352 ms</td><td>17 µs</td><td>16 µs</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Warm dev bundle, with build times on main. Lines are synthetic <code>resolver_warning</code> events sent through the real <code>TerminalReporter</code>, standing in for per-resolution warnings. Transforms are cached in a warm build, so workers log nothing. Medians of 12–16 runs per side, or 8 for the file. The real-terminal runs are only comparable within a row.</p>
+    <div class="prose stack">
+      <p>Cold builds absorb logging better because workers set the pace and the main thread has slack. Worker output of 36,261 lines (3.8 MB) takes 0.2–2.3 s of main-thread write time, but the PR raises build time by only 0.6–2.1%. Those figures are in the <a href="#pr">PR section</a>.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>When a terminal can block a build</h2>
+    <div class="prose stack">
+      <p>A terminal holds a build back only when it reads slower than Metro writes, or stops reading. Node puts TTY streams in blocking mode on POSIX, so <code>stream.write</code> on the main thread waits until the kernel accepts the bytes. A macOS PTY accepts 1,024 bytes with nobody reading, compared with 64 KiB for a pipe. That's about half a second of colour progress output.</p>
+    </div>
+    <div style="display:grid;gap:10px"><h3>Slow readers</h3><div class="scroll"><table>
+      <thead><tr><th>Read speed</th><th>Warm build</th><th>Slowdown</th><th>Cold build</th><th>Slowdown</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Unlimited</td><td>1,254 ms</td><td>–</td><td>10,104 ms</td><td>–</td></tr>
+        <tr><td class="sans">5 KB/s</td><td>1,233 ms</td><td>None</td><td>9,984 ms</td><td>None</td></tr>
+        <tr><td class="sans">3 KB/s</td><td>1,247 ms</td><td>None</td><td>10,048 ms</td><td>None</td></tr>
+        <tr><td class="sans">2 KB/s</td><td>1,250 ms</td><td>None</td><td>10,274 ms</td><td class="neg">1.02×</td></tr>
+        <tr><td class="sans">1 KB/s</td><td>2,840 ms</td><td class="neg">2.3×</td><td>23,604 ms</td><td class="neg">2.3×</td></tr>
+        <tr><td class="sans">500 B/s</td><td>5,932 ms</td><td class="neg">4.7×</td><td>52,360 ms</td><td class="neg">5.2×</td></tr>
+        <tr><td class="sans">300 B/s</td><td>8,999 ms</td><td class="neg">7.2×</td><td>–</td><td>–</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">Progress output only, with colours. Medians of 3 warm and 2 cold runs on the PR. The cold builds at 1 KB/s and 500 B/s wrote 23.3 KB and 25.9 KB, so their build times match bytes ÷ read speed: the build can't finish before its progress output has been read.</p>
+    <div class="prose stack">
+      <p>Progress output is about 1.6 KB/s in a warm build and 2 KB/s in a cold one, and Metro doesn't reduce it for a slow terminal. It can't detect the slowness, because the blocking happens inside <code>write</code>. Measured terminal stacks have a wide margin over that rate.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Terminal</th><th>Read capacity</th><th>Margin over 2 KB/s</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">PTY, fast reader</td><td>40.6 MB/s</td><td>About 20,000×</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>32.5 MB/s</td><td>About 16,000×</td></tr>
+        <tr><td class="sans">kitty</td><td>26.0 MB/s</td><td>About 13,000×</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>7.1 MB/s</td><td>About 3,500×</td></tr>
+        <tr><td class="sans">Windows 11 console, over <code>ssh -tt</code></td><td>3.1 MB/s</td><td>About 1,500×</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">20,000 unformatted lines of about 100 bytes, written without <code>Terminal</code>. One run per terminal.</p>
+    <div style="display:grid;gap:10px"><h3>Stalls</h3><div class="scroll"><table>
+      <thead><tr><th>Scenario</th><th>Build time</th><th>Added</th><th>Longest single write</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="4">Warm build, 5 s pause</td></tr>
+        <tr><td class="sans">No pause</td><td>1,232 ms</td><td>–</td><td>0.05 ms</td></tr>
+        <tr><td class="sans">Reader stops</td><td>5,756 ms</td><td class="neg">+4.5 s</td><td class="neg">4,489 ms</td></tr>
+        <tr><td class="sans"><code>^S</code> then <code>^Q</code></td><td>5,770 ms</td><td class="neg">+4.5 s</td><td class="neg">4,505 ms</td></tr>
+        <tr class="group"><td colspan="4">Cold build, 10 s pause</td></tr>
+        <tr><td class="sans">No pause</td><td>9,943 ms</td><td>–</td><td>3 ms</td></tr>
+        <tr><td class="sans">Reader stops</td><td>18,931 ms</td><td class="neg">+9.0 s</td><td class="neg">8,944 ms</td></tr>
+        <tr><td class="sans"><code>^S</code> then <code>^Q</code></td><td>18,932 ms</td><td class="neg">+9.0 s</td><td class="neg">8,980 ms</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">Medians of 6 warm and 3 cold runs per scenario. The pause starts 0.3 s (warm) or 3 s (cold) after the process starts.</p>
+    <div class="prose stack">
+      <p>A cold build loses almost as much as a warm one, despite having workers, because almost all of the pause lands on the main thread. Since one write spans the pause, the event loop can't run during it. That last point is inferred from the write being synchronous: the server's responsiveness during a stall wasn't probed separately.</p>
+      <p><code>^S</code> depends on flow control being on. <code>@react-native/community-cli-plugin</code> puts stdin in raw mode for its key handler, which should turn flow control off, but that wasn't tested.</p>
+    </div>
+  </section>
+
+  <section id="pr">
+    <h2>Impact of react/metro#2162</h2>
+    <div class="prose stack">
+      <p><a href="https://github.com/react/metro/pull/2162">react/metro#2162</a> by <a href="https://github.com/vzaidman">@vzaidman</a> makes <code>Terminal.log()</code> write immediately instead of queuing lines for the next status update, so logs stay in order with other output. The status path is effectively unchanged, so builds that log nothing are unaffected. Log lines are no longer joined, which raises writes up to 66× in a warm build and 18× in a cold one.</p>
+    </div>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev med">+0–7%</span><div><span class="t">Warm builds that log one line per module</span><span class="b">7,317 lines on a 1.3–1.5 s build: −9 to +93 ms depending on the terminal. This is a heavy case, and it takes about 7 µs of extra main-thread work per line on the fast PTY.</span></div></div>
+      <div class="tradeoff"><span class="sev med">+19%, edge case</span><div><span class="t">Slow reader with chatty logs</span><span class="b">At 10 KB/s with one worker line per file, a cold build takes 95.7 s against 80.5 s, and writes 947 KB against 796 KB. Inferred mechanism: on main, a blocking batched write holds up the status loop, while on the PR it keeps redrawing about every 33 ms and uses up scarce bandwidth. At 100 KB/s with five lines per file the gap is 2% (one run per side).</span></div></div>
+      <div class="tradeoff"><span class="sev low">7× on Windows</span><div><span class="t">Long bursts of log lines in one tick</span><span class="b">5,000 lines block for 181 ms against 25 ms on a Windows console, and 25–71 ms against 11–44 ms on macOS.</span></div></div>
+      <div class="tradeoff"><span class="sev low">+0.6–2.1%</span><div><span class="t">Cold builds with chatty workers</span><span class="b">36,261 lines add 0.3–1.2 s of main-thread writes, but workers limit the build, so most of that doesn't reach build time. 2–3 runs per side, so the low end is within noise.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Small gain</span><div><span class="t">Shorter main-thread pauses while logging</span><span class="b">In the warm 7,317-line runs, the longest single write falls from 0.9–2.8 ms to about 0.13 ms on the PTY, app terminal and kitty, and from 13.4 to 10.7 ms on Terminal.app.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Neutral</span><div><span class="t">Builds that log nothing</span><span class="b">Differences between main and the PR are within noise in every terminal, for warm builds and cold.</span></div></div>
+    </div>
+    <div style="display:grid;gap:10px"><h3>Build time, main against the PR</h3><div class="scroll"><table>
+      <thead><tr><th>Terminal</th><th>Main</th><th>PR</th><th>Δ (95% CI)</th><th>Writes</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="5">Cold, no log lines</td></tr>
+        <tr><td class="sans">PTY, fast reader</td><td>9,996 ms</td><td>9,998 ms</td><td>+8 ms<br><span class="mono" style="color:var(--fg-3)">−45 … +54</span></td><td>284 → 286</td></tr>
+        <tr class="group"><td colspan="5">Warm, no log lines</td></tr>
+        <tr><td class="sans">PTY, fast reader</td><td>1,228 ms</td><td>1,224 ms</td><td>−4 ms<br><span class="mono" style="color:var(--fg-3)">−12 … +2</span></td><td>27 → 28</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>1,237 ms</td><td>1,228 ms</td><td>−4 ms<br><span class="mono" style="color:var(--fg-3)">−30 … +18</span></td><td>29 → 28</td></tr>
+        <tr><td class="sans">kitty</td><td>1,264 ms</td><td>1,267 ms</td><td>+2 ms<br><span class="mono" style="color:var(--fg-3)">−2 … +14</span></td><td>29 → 28</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>1,250 ms</td><td>1,243 ms</td><td>−8 ms<br><span class="mono" style="color:var(--fg-3)">−12 … +31</span></td><td>29 → 28</td></tr>
+        <tr class="group"><td colspan="5">Warm, 74 lines</td></tr>
+        <tr><td class="sans">PTY, fast reader</td><td>1,229 ms</td><td>1,234 ms</td><td>+1 ms<br><span class="mono" style="color:var(--fg-3)">−12 … +10</span></td><td>106 → 156</td></tr>
+        <tr class="group"><td colspan="5">Warm, 732 lines</td></tr>
+        <tr><td class="sans">PTY, fast reader</td><td>1,244 ms</td><td>1,259 ms</td><td class="neg">+17 ms (+1.3%)<br><span class="mono" style="color:var(--fg-3)">+6 … +24</span></td><td>107 → 816</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>1,254 ms</td><td>1,278 ms</td><td class="neg">+26 ms (+2.0%)<br><span class="mono" style="color:var(--fg-3)">+8 … +37</span></td><td>111 → 813</td></tr>
+        <tr><td class="sans">kitty</td><td>1,287 ms</td><td>1,292 ms</td><td>+3 ms<br><span class="mono" style="color:var(--fg-3)">−4 … +10</span></td><td>109 → 813</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>1,275 ms</td><td>1,282 ms</td><td>+2 ms<br><span class="mono" style="color:var(--fg-3)">−153 … +8</span></td><td>112 → 814</td></tr>
+        <tr class="group"><td colspan="5">Warm, 7,317 lines</td></tr>
+        <tr><td class="sans">PTY, fast reader</td><td>1,322 ms</td><td>1,377 ms</td><td class="neg">+56 ms (+4.2%)<br><span class="mono" style="color:var(--fg-3)">+52 … +61</span></td><td>113 → 7,406</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>1,383 ms</td><td>1,476 ms</td><td class="neg">+93 ms (+6.7%)<br><span class="mono" style="color:var(--fg-3)">+81 … +104</span></td><td>118 → 7,407</td></tr>
+        <tr><td class="sans">kitty</td><td>1,431 ms</td><td>1,467 ms</td><td class="neg">+38 ms (+2.7%)<br><span class="mono" style="color:var(--fg-3)">+29 … +51</span></td><td>121 → 7,402</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>1,460 ms</td><td>1,450 ms</td><td>−9 ms<br><span class="mono" style="color:var(--fg-3)">−67 … +4</span></td><td>116 → 7,407</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">Balanced ABBA order. Main and PR columns are medians per side. Δ is the median per group with a bootstrap 95% CI, so it can differ slightly from the difference of the two medians. Cold: 24 runs per side. Warm: 16 per side on the PTY and 12 in emulators.</p>
+    <div style="display:grid;gap:10px"><h3>Worker logging in a cold build</h3><div class="scroll"><table>
+      <thead><tr><th>Terminal</th><th>Writes</th><th>Write time, main → PR</th><th>Build time, main → PR</th><th>Δ</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">PTY, fast reader</td><td>2,083 → 37,863</td><td>205 → 537 ms</td><td>9,981 → 10,036 ms</td><td>+0.6%</td></tr>
+        <tr><td class="sans">kitty</td><td>2,070 → 37,860</td><td>524 → 1,738 ms</td><td>10,194 → 10,257 ms</td><td>+0.6%</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>2,018 → 37,886</td><td>1,303 → 2,312 ms</td><td>10,596 → 10,700 ms</td><td>+1.0%</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>2,118 → 37,941</td><td>261 → 532 ms</td><td>10,226 → 10,446 ms</td><td>+2.1%</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">36,261 lines (3.8 MB), five per transformed file, logged from workers. Medians of 3 runs per side on the PTY, always main first, and 2 per side in emulators.</p>
+    <div style="display:grid;gap:10px"><h3>The <code>Terminal</code> class alone</h3><div class="scroll"><table>
+      <thead><tr><th>Terminal</th><th>6 s of progress, writes</th><th>300 lines/s, % of wall time in writes</th><th>5,000-line burst</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">PTY, fast reader</td><td>8 ms</td><td>0.6 → 1.2%</td><td>11 → 25 ms</td></tr>
+        <tr><td class="sans">App terminal panel</td><td>9 ms</td><td>0.8 → 1.2%</td><td>20 → 26 ms</td></tr>
+        <tr><td class="sans">kitty</td><td>9 ms</td><td>0.7 → 1.1%</td><td>21 → 29 ms</td></tr>
+        <tr><td class="sans">Terminal.app</td><td>9 ms</td><td>0.9 → 1.2%</td><td>44 → 71 ms</td></tr>
+        <tr><td class="sans">Windows 11 console, over <code>ssh -tt</code></td><td>23–25 ms</td><td>1.8 → 4.2%</td><td>25 → 181 ms</td></tr>
+      </tbody>
+    </table></div></div>
+    <p class="note prose">Main → PR, synchronous write time. Medians of 3 rounds per side, with no Metro build running. These are the only Windows measurements in this report. Progress writes are about the same on both sides.</p>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <ul class="tight prose">
+      <li><strong>Performance isn't a reason to hold back react/metro#2162.</strong> Builds that log nothing are unaffected. The largest cost on a normal terminal is +7% on a warm build logging one line per module, and the larger +19% needs a 10 KB/s terminal.</li>
+      <li><strong>Leave the progress bar's throttling alone.</strong> With at most 0.13% of main-thread time in writes, there's nothing meaningful to win back.</li>
+      <li><strong>Reduce repeated main-thread logging where a warm build has it.</strong> Removing 7,317 lines saves 94–248 ms, more than any change to <code>Terminal</code> can, and most of that cost is in the reporter rather than the write.</li>
+      <li><strong>Don't move terminal output off the main thread for now.</strong> It's the only complete fix for stalls, but these measurements don't show enough cost in normal use to justify it. This is a judgement call, to revisit if stalls turn out to be common.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <p>Each run starts a real <code>Metro.runServer</code> with <code>TerminalReporter</code> and requests one iOS dev bundle (7,316 modules, 59 MB) from a separate <code>curl</code> process. Build time runs from the request to <code>curl</code> exiting. The app is <a href="https://github.com/mattermost/mattermost-mobile">Mattermost mobile</a> at <span class="mono">ad6b834</span> on Metro 0.87.1, with its own Metro config, using the node crawler and a warm file map. Only <code>metro-core</code>'s <code>Terminal.js</code> changes between sides, loaded at runtime from <span class="mono">cddcf36</span> (main) or PR commit <span class="mono">8f027e2</span>. The PR's later commit <span class="mono">47808a7</span> adds an <code>await</code> to <code>waitForUpdates()</code>, which isn't on the write path, and it wasn't measured.</p>
+      <p>Cold means an empty transform cache and warm means every transform is a cache hit. Writes are timed by wrapping <code>process.stdout.write</code>, which captures blocking because the writes are synchronous. Main-thread busy time is <code>performance.eventLoopUtilization()</code>, which counts time blocked in a write as busy.</p>
+      <p>PTY runs use a real PTY with a scripted reader that drains as fast as possible, at a set rate, or not at all. Emulator runs execute inside the app terminal panel of Claude Code's desktop app, kitty and Terminal.app. Comparisons between main and the PR use balanced ABBA order and a bootstrap 95% CI over per-group differences. The machine was shared with other work. Rounds waited up to 90 s for the 1-minute load average to fall below 5, but the balanced cold runs had a median load of 9.8. Differences under about 1% should be treated as noise unless a CI excludes zero.</p>
+      <p>Colour affects the byte counts. The reader-speed, warm logging and emulator runs have colour on. The balanced cold runs and the cold logging runs on the fast PTY have it off, at 9.4 KB of progress output against 20 KB, with similar write time (6.1 ms with colour, 2 runs).</p>
+    </div>
+    <div class="prose stack">
+      <p><strong>What this doesn't cover:</strong></p>
+    </div>
+    <ul class="tight prose">
+      <li>Whether emulators were painting. The test machine may not have had an active display and the app panel wasn't necessarily open, so rendering may have been skipped. Their read loops were real, but capacities on a visible, painting terminal may be lower.</li>
+      <li>Real slow links, SSH sessions and tmux. Slow readers and stalls were produced by the scripted reader.</li>
+      <li>Full Metro builds on Windows, the Windows Terminal app and QuickEdit selection pauses.</li>
+      <li>Real warnings. The main-thread lines are synthetic, and one per module is deliberately heavy. Linux wasn't measured, and this is one app on one machine.</li>
+    </ul>
+    <details class="prose"><summary>PTY reader with a set read speed</summary><pre>#!/usr/bin/env python3
+"""Runs a command on a real PTY and drains the master side at a bounded rate.
+
+--rate 0 reads as fast as possible. --stall-at/--stall-for stop reading for a window.
+--xoff-at/--xoff-for send ^S and ^Q through the line discipline instead."""
+import argparse, fcntl, os, pty, select, signal, struct, sys, termios, time
+
+p = argparse.ArgumentParser()
+p.add_argument('--rate', type=float, default=0)
+p.add_argument('--stall-at', type=float, default=-1)
+p.add_argument('--stall-for', type=float, default=0)
+p.add_argument('--xoff-at', type=float, default=-1)
+p.add_argument('--xoff-for', type=float, default=0)
+p.add_argument('--cols', type=int, default=120)
+p.add_argument('--rows', type=int, default=40)
+p.add_argument('--save', default=None)
+p.add_argument('--max-seconds', type=float, default=240)
+p.add_argument('cmd', nargs=argparse.REMAINDER)
+a = p.parse_args()
+cmd = a.cmd[1:] if a.cmd and a.cmd[0] == '--' else a.cmd
+
+pid, fd = pty.fork()
+if pid == 0:
+    os.execvp(cmd[0], cmd)
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', a.rows, a.cols, 0, 0))
+os.kill(pid, signal.SIGWINCH)
+
+save = open(a.save, 'wb') if a.save else None
+t0 = time.monotonic()
+total = 0
+xoffed = xoned = False
+chunk = 65536 if a.rate == 0 else max(1, min(4096, int(a.rate / 100) or 1))
+while True:
+    now = time.monotonic() - t0
+    if now &gt; a.max_seconds:
+        os.killpg(pid, signal.SIGKILL)
+        print('WATCHDOG killed', file=sys.stderr)
+        break
+    if a.xoff_at &gt;= 0 and not xoffed and now &gt;= a.xoff_at:
+        os.write(fd, b'\x13'); xoffed = True
+    if xoffed and not xoned and now &gt;= a.xoff_at + a.xoff_for:
+        os.write(fd, b'\x11'); xoned = True
+    if a.stall_at &gt;= 0 and a.stall_at &lt;= now &lt; a.stall_at + a.stall_for:
+        time.sleep(0.01); 
+        continue
+    if a.rate &gt; 0:
+        allowed = a.rate * now - total
+        if allowed &lt; 1:
+            time.sleep(min(0.01, (1 - allowed) / a.rate))
+            continue
+    r, _, _ = select.select([fd], [], [], 0.05)
+    if fd in r:
+        try:
+            data = os.read(fd, chunk if a.rate == 0 else max(1, min(chunk, int(allowed))))
+        except OSError:
+            break
+        if not data:
+            break
+        total += len(data)
+        if save: save.write(data)
+    else:
+        done, _ = os.waitpid(pid, os.WNOHANG)
+        if done:
+            pid = 0
+            break
+if pid:
+    try: os.waitpid(pid, 0)
+    except OSError: pass
+print(f'pty drained {total} bytes in {time.monotonic()-t0:.2f}s', file=sys.stderr)</pre></details>
+    <details class="prose"><summary>PTY buffer measurement</summary><pre># Measures how many bytes a PTY (or pipe) accepts with nobody reading before a write blocks.
+import os, pty, fcntl, termios, select, time
+def cap(w, n):
+    fl = fcntl.fcntl(w, fcntl.F_GETFL); fcntl.fcntl(w, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+    t = 0; b = b'x' * n
+    while True:
+        try:
+            t += os.write(w, b)
+        except BlockingIOError:
+            return t
+for n in (100, 1024):
+    m, s = pty.openpty()
+    print('pty chunk', n, 'capacity', cap(s, n)); os.close(m); os.close(s)
+r, w = os.pipe(); print('pipe capacity', cap(w, 1024))</pre></details>
+    <details class="prose"><summary>Main-thread log lines, inside the reporter wrapper</summary><pre>const inner = new TerminalReporter(new Terminal(process.stdout));
+const reporter = {
+  update(e) {
+    inner.update(e);
+    if (mainLogEvery &gt; 0 &amp;&amp; e.type === 'bundle_transform_progressed' &amp;&amp; ++progressEvents % mainLogEvery === 0) {
+      inner.update({
+        type: 'resolver_warning',
+        message: `The package "some-package" is imported from a path not listed in its exports: file-${progressEvents}.js`,
+      });
+    }
+  },
+};</pre></details>
+  </section>
+</main>
+</body>
+</html>

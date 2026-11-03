@@ -49,6 +49,19 @@
     ]
   },
   {
+    "slug": "metro-terminal-output",
+    "title": "Terminal output and Metro's main thread",
+    "description": "How much main-thread time terminal output takes during cold and warm Metro builds, when a terminal can hold a build back, and what react/metro#2162 changes.",
+    "date": "2026-11-03",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-11-03",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "metro-transformer-performance",
     "title": "Where Metro's transformer spends a cold build",
     "description": "Cold-build profile of Metro's transform pipeline on Mattermost mobile: worker scaling and IPC, Babel config and per-plugin costs, the main thread, and three fixes that cut CPU 8–15% with identical output.",
