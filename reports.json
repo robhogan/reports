@@ -111,6 +111,19 @@
     ]
   },
   {
+    "slug": "react-native-59135-remote-simulator-security",
+    "title": "Running pull requests on remote iOS simulators",
+    "description": "Whether a maintainer comment protects the credentials and machines behind Argent Cloud iOS E2E runs in react/react-native#59135, and a model that doesn't depend on review.",
+    "date": "2026-11-04",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-11-04",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "react-native-babel-preset-hbc-size",
     "title": "Which preset transforms still cost Hermes bytecode",
     "description": "Each transform @react-native/babel-preset still runs for release Hermes builds, measured for bytecode size, with runtime speed and memory checked for native u-flag regexes and async functions.",

