@@ -153,5 +153,18 @@
         "note": "Clarified why the lazy-compilation sweep on 250829098.0.16 is left out."
       }
     ]
+  },
+  {
+    "slug": "react-native-visual-test-failures",
+    "title": "RNTester visual test failures, and what to do about them",
+    "description": "Why React Native's visual regression tests failed in their first 13 days, and each candidate fix evaluated against the data and on a simulator.",
+    "date": "2026-11-04",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-11-04",
+        "note": "First published."
+      }
+    ]
   }
 ]
