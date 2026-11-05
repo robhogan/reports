@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Metro #2170: Terminal status and external writes</title>
+<meta name="description" content="What waiting for bursts of external writes changes in an interactive terminal, and what the status redraw path costs, on real PTY builds of Mattermost.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+<style>
+  .frame { font-size: 12px; line-height: 1.45; margin: 0; }
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-11-05. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">react/metro #2170 · benchmark</div>
+    <h1>Waiting for bursts of external writes: what an interactive terminal shows</h1>
+    <p class="lede">What <a href="https://github.com/react/metro/pull/2170">react/metro#2170</a> changes for a person watching a Metro build, and what it costs the build, measured on a real PTY, rendered through a terminal model, and benchmarked on Mattermost with the method from the <a href="https://robhogan.github.io/reports/metro-terminal-output/">terminal output report</a>.</p>
+    <div class="meta">
+      <span>PR head <span class="mono">afd65a3</span>, base <span class="mono">548fc48</span></span><span>Metro 0.87.1 with <code>Terminal.js</code> and <code>TerminalReporter.js</code> swapped</span><span>Mattermost mobile <span class="mono">ad6b834</span>, 7,316 modules</span><span>Node 24.21.0, macOS, M4 Pro, 8 workers</span><span><code>@xterm/headless</code> 5.5.0</span><span>Measured 2026-11-05</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">Verdict</span><span class="v">Land after two small fixes</span><span class="d">The burst handling does what it sets out to do. Rendering and logging need a small change each.</span></div>
+      <div><span class="k">Status copies at 10 lines/s</span><span class="v pos">97 → 4</span><span class="d">Cold Mattermost build with <code>console.log</code> every 100 ms. Every line arrives, in order and unmangled.</span></div>
+      <div><span class="k">Status on screen at 30 lines/s</span><span class="v neg">95% → 52%</span><span class="d">Lines through <code>terminal.log</code>, such as client logs. The status blinks off after each line until the next redraw.</span></div>
+      <div><span class="k">Warm build</span><span class="v neg">+11%</span><span class="d">1,228 ms → 1,366 ms (CI +128 to +146 ms). The status is rebuilt for each of 14,638 progress events on a busy main thread.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>Thanks to <a href="https://github.com/vzaidman">@vzaidman</a>, bursts of outside output now leave far fewer stale status lines, and the erase sequences hold up with wrapping, resizing and on Windows. The status also behaves as well as or better than on <code>main</code> around HMR, key handling and process exit.</p>
+      <p>Three costs don't appear in the PR's benchmarks, which use piped output and cold builds. All three come from the status redraw path rather than the burst handling, and a 100 ms render limit in the reporter plus restoring the status in <code>log()</code> removes them. Neither change needs a dependency. The patch is under <a href="#recommendation">Recommendation</a>.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Tradeoffs</h2>
+    <div class="tradeoffs">
+      <div class="tradeoff"><span class="sev high">Up to 3× slower</span><div><span class="t">Slow links hold a cold build back at rates that were fine before</span><span class="b">33 ms redraws raise output from 21 KB to 58 KB, about 2 KB/s to 5.6 KB/s. A reader at 3 KB/s takes a cold build from 10.4 s to 19.4 s, and at 2 KB/s to 31.3 s. Only slow or stalled links are affected, and a 100 ms render limit restores <code>main</code>'s behaviour.</span></div></div>
+      <div class="tradeoff"><span class="sev high">+138 ms warm</span><div><span class="t">Warm builds are 11% slower with a terminal attached</span><span class="b">Building the status per progress event takes reporter time from 3.1 ms to 134.5 ms. A render limit in the reporter takes the difference to +2 ms (CI −7 to +16).</span></div></div>
+      <div class="tradeoff"><span class="sev med">95% → 52%</span><div><span class="t">The status blinks during <code>terminal.log</code> traffic</span><span class="b">Each line erases the status, which stays away for the rest of the 33 ms delay. It's most visible at 10–100 lines/s, and it applies to Metro's own logs, with no outside writer involved.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Design choice</span><div><span class="t">Regular output freezes the bar with no fewer copies</span><span class="b">With a line every 500 ms, copies stay at 20, and the status is the bottom line 31% of the time against 90–93%. A shorter quiet period trades this against more copies.</span></div></div>
+      <div class="tradeoff"><span class="sev low">Design choice</span><div><span class="t">Sustained output shows much less progress</span><span class="b">The bar jumps every 2 s at 10 lines/s. At 300 lines/s on 40 rows the status scrolls away and is on screen for 6% of the build. Short builds can show no bar at all. The log output itself shows activity, so this looks like the right tradeoff.</span></div></div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Bursts and sustained outside output</h2>
+    <div class="prose stack">
+      <p>At 10 lines/s, <code>main</code> leaves a status copy between almost every pair of lines, and the PR leaves one about every 2 s. No line was lost, reordered or mangled in any run, including alternating <code>stdout</code> and <code>stderr</code> bursts.</p>
+    </div>
+    <div class="grid2">
+      <div style="display:grid;gap:10px"><h3><code>main</code>, 2.1 s into the build</h3><pre class="frame"> BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (51/3000)
+EXT 00002 out
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (101/3000)
+EXT 00003 out
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (151/3000)
+EXT 00004 out
+ BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (202/3000)
+EXT 00005 out</pre></div>
+      <div style="display:grid;gap:10px"><h3>PR, 2.1 s into the build</h3><pre class="frame"> BUNDLE  ./index.js ░░░░░░░░░░░░░░░░ 0% (32/3000)
+EXT 00001 out
+EXT 00002 out
+EXT 00003 out
+EXT 00004 out
+EXT 00005 out
+EXT 00006 out
+EXT 00007 out</pre></div>
+    </div>
+    <p class="note prose">The first eight rows of the rendered screen in a synthetic 6 s build with a line every 100 ms. The status lines continue below in the same pattern.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Cold Mattermost build</th><th>Copies, <code>main</code> → PR</th><th>Status is the bottom line, <code>main</code> → PR</th><th>Longest wait for new progress, <code>main</code> → PR</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">No outside output</td><td>0 → 0</td><td>100% → 100%</td><td>220–244 → 209–210 ms</td></tr>
+        <tr><td class="sans"><code>console.log</code> every 100 ms</td><td class="pos">97 → 4</td><td class="neg">31–36% → 2–3%</td><td class="neg">176–177 → 2,035–2,039 ms</td></tr>
+        <tr><td class="sans"><code>console.log</code> every 500 ms</td><td>20 → 20</td><td class="neg">90–93% → 31%</td><td class="neg">176–179 → 541–543 ms</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Real <code>Metro.runServer</code> builds, 2 runs per side, ranges shown. Copies are status lines left in the whole scrollback at the end. In the no-output row, the longest wait reflects main-thread stalls in the build and not the terminal code.</p>
+    <div class="prose stack">
+      <p>The rest of the picture comes from synthetic 6 s builds. At 300 lines/s on 40 rows, the status is on screen 6% of the time on the PR, always on <code>main</code>, with 3 copies against 60 (one run per side). A warm Mattermost build with a line every 100 ms finishes inside the 2 s cap, so the PR shows no progress at all in either of 2 runs, against 8–10 copies on <code>main</code>.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>The status blinks during <code>terminal.log</code> traffic</h2>
+    <div class="prose stack">
+      <p>At 30 lines/s through <code>terminal.log</code>, the status is on screen 52% of the time against 95% on <code>main</code>. <code>log()</code> erases the status and writes the line, but the redraw then waits for the rest of the 33 ms status delay, which is nearly always running during a build. On <code>main</code>, the redraw after a log is usually synchronous. <code>client_log</code>, <code>worker_stdout_chunk</code> and warnings all take this path. If lines land at random within the delay, each costs about 17 ms of status on average, which roughly fits the table (an inference from the code and the measured rates).</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Lines/s through <code>terminal.log</code></th><th><code>main</code></th><th>PR</th><th>100 ms limit only</th><th>33 ms limit + <code>log()</code> fix</th><th>100 ms limit + <code>log()</code> fix</th></tr></thead>
+      <tbody>
+        <tr><td>0</td><td>99.7%</td><td>99.7%</td><td>100%</td><td>100%</td><td>99.8%</td></tr>
+        <tr><td>3</td><td>100%</td><td class="neg">95.3%</td><td>97.8%</td><td class="pos">100%</td><td class="pos">99.8%</td></tr>
+        <tr><td>10</td><td>100%</td><td class="neg">87.5%</td><td>96.2%</td><td class="pos">99.7%</td><td class="pos">100%</td></tr>
+        <tr><td>30</td><td>95%</td><td class="neg">52%</td><td>53%</td><td class="pos">99.7%</td><td class="pos">99.7%</td></tr>
+        <tr><td>100</td><td>42%</td><td class="neg">16%</td><td>16%</td><td class="pos">99.7%</td><td class="pos">99.7%</td></tr>
+        <tr><td>300</td><td>16%</td><td>20%</td><td>14%</td><td class="pos">100%</td><td class="pos">99.8%</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Share of a synthetic 6 s build with the status on the 40-row screen, sampled at 60 Hz. Medians of 3 runs for <code>main</code>, the PR and the 33 ms column, and 2 runs for the 100 ms columns.</p>
+    <div class="prose stack">
+      <p>Real Mattermost builds agree. At about 3 lines/s from the main thread, the status is on screen 99.7% of the time on <code>main</code> and 95–97% on the PR. With one worker line per module, about 730 lines/s, it's 13–14% and 6–9%. So <code>main</code> blinks too at very high rates, and the fix goes further than restoring it: 98.9–99.8% in those two builds, with a 33 ms limit.</p>
+      <p>That costs output at high log rates, because the status is written again with each line: 2.29 MB against 0.86 MB for the worker case on <code>main</code>. Cold build time doesn't change, and a warm build with 7,317 lines takes +28 ms against <code>main</code>, compared with +132 ms on the PR.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Build time and main-thread cost</h2>
+    <div class="prose stack">
+      <p>A warm build is 11% slower on the PR, and a limit in the reporter removes the difference. Warm builds are nearly all main-thread work, so the cost of building the status for each of 14,638 progress events reaches build time directly. Cold builds have slack, so build time doesn't move, but the same work adds 328 ms of main-thread CPU. <code>Terminal</code> already limits writes here, so this isn't a write cost.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Build</th><th><code>main</code> (ms)</th><th>PR (ms)</th><th>PR − <code>main</code> (95% CI)</th><th>33 ms limit + <code>log()</code> fix (ms)</th><th>Fix − <code>main</code> (95% CI)</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Warm</td><td>1,228</td><td>1,366</td><td class="neg">+138<br><span class="mono" style="color:var(--fg-3)">+128 … +146</span></td><td>1,230</td><td>+2<br><span class="mono" style="color:var(--fg-3)">−7 … +16</span></td></tr>
+        <tr><td class="sans">Warm, 7,317 logged lines</td><td>1,380</td><td>1,512</td><td class="neg">+132<br><span class="mono" style="color:var(--fg-3)">+113 … +146</span></td><td>1,408</td><td class="neg">+28<br><span class="mono" style="color:var(--fg-3)">+16 … +42</span></td></tr>
+        <tr><td class="sans">Cold</td><td>10,455</td><td>10,448</td><td>−7<br><span class="mono" style="color:var(--fg-3)">−95 … +114</span></td><td>10,435</td><td>−20<br><span class="mono" style="color:var(--fg-3)">−98 … +94</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Dev bundle through a PTY with a fast reader. Medians of 16 runs per side (warm), 8 (warm with lines) and 6 (cold). Reporter time, <code>main</code> → PR → fix: 3.1 → 134.5 → 4.1 ms warm, 132 → 261 → 162 ms with lines, 22 → 407 → 57 ms cold. Bytes written: 2.0 → 3.4 → 3.3 KB warm, 0.93 → 0.93 → 2.43 MB with lines, 21 → 59 → 56 KB cold. Main-thread CPU on the PR against <code>main</code>: +148 ms warm (CI +110 to +186), +119 ms warm with lines (CI +84 to +154), +328 ms cold (CI +246 to +413). Against <code>main</code>, the fix's CIs for CPU include zero when warm and cold.</p>
+    <div class="prose stack">
+      <p>The PR's own tables measure <code>metro build</code> with piped output. Its wall-time saving comes from no longer waiting on a trailing throttle timer at exit, in non-TTY builds. It's a real gain, separate from the costs here. A piped run of a small fixture exited about 3.3 s sooner than on the base.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Slow readers</h2>
+    <div class="prose stack">
+      <p>Builds on the PR slow down below about 8 KB/s, where <code>main</code> holds to 2 KB/s, because TTY writes block the main thread on POSIX and redraws follow wall time. The earlier report describes that mechanism. A 33 ms render limit doesn't help here, because it's the redraw rate that matters. A 100 ms limit brings output back to about 19 KB and removes the slowdown.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Read speed</th><th><code>main</code>, cold</th><th>PR, cold</th><th>33 ms limit, cold</th><th>100 ms limit, cold</th><th><code>main</code>, warm</th><th>PR, warm</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">Unlimited</td><td>10.45 s</td><td>10.45 s</td><td>10.44 s</td><td>10.3–11.0 s</td><td>1.23 s</td><td>1.37 s</td></tr>
+        <tr><td class="sans">8 KB/s</td><td>10.3 s</td><td>10.2 s</td><td>10.2 s</td><td>–</td><td>–</td><td>–</td></tr>
+        <tr><td class="sans">5 KB/s</td><td>10.3 s</td><td class="neg">11.5 s</td><td class="neg">11.3 s</td><td>–</td><td>1.24 s</td><td>1.37 s</td></tr>
+        <tr><td class="sans">3 KB/s</td><td>10.4 s</td><td class="neg">19.4 s</td><td class="neg">19.0 s</td><td class="pos">10.2 s</td><td>1.24 s</td><td>1.38 s</td></tr>
+        <tr><td class="sans">2 KB/s</td><td>10.4 s</td><td class="neg">31.3 s</td><td class="neg">30.3 s</td><td class="pos">10.3 s</td><td>1.24 s</td><td class="neg">1.81 s</td></tr>
+        <tr><td class="sans">1 KB/s</td><td>–</td><td>–</td><td>–</td><td>–</td><td>2.84 s</td><td class="neg">3.82 s</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Medians of 2 runs per side (cold) and 3 (warm), with the read rate set by a reader on the PTY, not a real slow link. The limit columns include the <code>log()</code> fix, which doesn't write more without log lines. The unlimited cold row is from the 6-run comparison above, except for the 100 ms column, which shows its 2 runs.</p>
+  </section>
+
+  <section>
+    <h2>What's unchanged or better</h2>
+    <ul class="tight prose">
+      <li><strong>No outside output:</strong> The bar updates at about 30 Hz against 10 Hz, with no leftovers and the same final state.</li>
+      <li><strong>Wrapping and resizing:</strong> Clean at 20 and 40 columns, including multi-line and two-bundle statuses. Narrowing the window from 120 to 40 columns leaves one reflowed line on both sides. The bytes differ (<code>\r</code> against a long cursor-left), and the rendered result is the same.</li>
+      <li><strong>Windows 11 through <code>ssh -tt</code>:</strong> Erasing, wrapping, logs and the <code>beforeExit</code> flush render correctly. A burst leaves a copy per line on <code>main</code> and none between its lines on the PR. This ran the <code>Terminal</code> class on its own through conhost, without a full Metro build.</li>
+      <li><strong>HMR:</strong> "Done" lines arrive within about 1 ms on both sides, including straight after a <code>console.log</code>. A rebuild under 333 ms following a log shows no bar, which reads as cleaner.</li>
+      <li><strong>Key handling:</strong> Fine in raw mode with a menu status. The stale menu copy left on <code>main</code> when a line lands right after a build was gone in the one run of this scenario on each side.</li>
+      <li><strong>Exit:</strong> A natural exit writes the latest status. <code>process.exit()</code> and an uncaught error leave the same or a newer status. After Ctrl-C the status stayed on screen in 5 of 6 runs against 6 of 6, with the cursor correct in all of them. The sixth run simply has no status left.</li>
+      <li><strong>Writers <code>bytesWritten</code> can't see:</strong> Lines from <code>stdio: 'inherit'</code> children and <code>fs.writeSync(1, …)</code> are erased by the next redraw and a status copy stays, the same on both sides. This is the known limit from <a href="https://github.com/react/metro/pull/2130">react/metro#2130</a>.</li>
+      <li><strong>Separate streams:</strong> With a TTY on <code>stdout</code> and <code>stderr</code> piped, <code>stderr</code> bytes count as outside output though they never reach the terminal. That summing already exists on <code>main</code> (60 copies at 10 lines/s, against 3 here), and on the PR the bar updates only about every 2 s in this setup.</li>
+      <li><strong>Piped <code>stdout</code>:</strong> 3 status lines over a 6 s build on both sides.</li>
+      <li><strong>API:</strong> <code>#isUpdating</code> and <code>#hasPendingUpdate</code> were private, so removing them isn't an API change. <code>[Breaking]</code> is the right scope for the removed event type.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Smaller points</h2>
+    <ul class="tight prose">
+      <li><strong>Mixed traffic loses the benefit.</strong> <code>#write</code> rolls outside bytes into the count, so <code>console.log</code> followed by <code>terminal.log</code> looks quiet to the next status. Alternating the two at 10 lines/s leaves 60 copies on both sides.</li>
+      <li><strong>Old output still delays the next status.</strong> The wait compares bytes, not time, so one <code>console.log</code> long ago delays the next status by 333 ms: 336 ms against 1 ms after 3 s of quiet. Log lines aren't affected.</li>
+      <li><strong>Several <code>Terminal</code>s at once.</strong> 11 or more updating together trigger <code>MaxListenersExceededWarning</code> on <code>beforeExit</code>.</li>
+      <li><strong>Non-TTY <code>waitForUpdates()</code>.</strong> With the process kept alive, it takes 3.5 s against 35 ms when the status has changed. Metro, <code>@expo/cli</code> and React Native's community CLI plugin don't call it.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Expo CLI, when it adopts this version</h2>
+    <div class="prose stack">
+      <p>Expo pins its Metro version, so nothing here affects it until then, and none of this needs to hold up the PR. Three things will need attention in <code>@expo/cli</code> at that point.</p>
+    </div>
+    <ul class="tight prose">
+      <li><strong>Progress events:</strong> <code>MetroTerminalReporter</code> emits <code>bundling:progress</code> from the removed <code>bundle_transform_progressed_throttled</code> event. Moving to <code>bundle_transform_progressed</code> means handling every event, so it needs a limit of its own.</li>
+      <li><strong>Warnings and errors:</strong> <code>LogRespectingTerminal</code> clears the status, flushes, writes to <code>stderr</code> directly and restores the status. That write counts as outside output, so each warning hides the status for up to 333 ms. At 10 warnings/s it's on screen 1.7% of a build against 100%. This is one run of the same logic in the harness, not of Expo CLI itself.</li>
+      <li><strong>Types:</strong> <code>TerminalReporter.types.ts</code> declares the removed <code>_scheduleUpdateBundleProgress</code>.</li>
+    </ul>
+  </section>
+
+  <section id="recommendation">
+    <h2>Recommendation</h2>
+    <ul class="tight prose">
+      <li><strong>Limit rendering in <code>TerminalReporter</code> to one progress update per 100 ms.</strong> This removes the warm build cost and the slow-reader regression, and it's a timestamp check, so <code>lodash.throttle</code> stays out. The bar stays at the 10 Hz it has today. Without a trailing render, the count on screen can lag until the next event or <code>bundle_build_done</code>.</li>
+      <li><strong>Restore the status in <code>Terminal.log()</code>,</strong> in the same write as the line. This removes the blink at every rate measured. It writes more at very high log rates, and if that matters more, the status can be restored only below some rate.</li>
+      <li><strong>Add a test</strong> that the status stays on the screen across <code>log()</code>. The new tests use fake timers over a small screen model with real escape handling, which suits this well, and they don't cover it yet.</li>
+      <li><strong>Consider the 333 ms quiet period</strong> against lines 333–500 ms apart. Lowering it is a judgement call, and leaving it as it is seems reasonable.</li>
+    </ul>
+    <pre>// TerminalReporter.update()
+this._log(event);
+this._updateState(event);
+if (event.type === 'bundle_transform_progressed') {
+  const now = performance.now();
+  if (now - (this._lastProgressRender ?? -Infinity) &lt; 100) {
+    return;
+  }
+  this._lastProgressRender = now;
+}
+this.terminal.status(this._getStatusMessage());
+
+// Terminal.log()
+const shownStatus = this.#writtenStatus;
+this.#eraseWrittenStatusMaybe();
+const isErased =
+  this.#ttyStream != null &amp;&amp;
+  shownStatus.length &gt; 0 &amp;&amp;
+  this.#getBytesWritten() === this.#bytesWrittenAfterLastWrite;
+this.#write(
+  util.format(format, ...args) + '\n' + (isErased ? shownStatus + '\n' : ''),
+);
+if (isErased) {
+  this.#writtenStatus = shownStatus;
+}
+this.#scheduleStatusUpdate();</pre>
+    <p class="note prose">These are the measured changes, applied to Babel-compiled copies of the PR's files. <code>_log</code> and <code>_updateState</code> still run per event, so subclass overrides see every event.</p>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <p>Results are AI-driven. Build measurements follow the <a href="https://robhogan.github.io/reports/metro-terminal-output/">terminal output report</a>: a real <code>Metro.runServer</code> serving Mattermost's dev bundle (7,316 modules, 59 MB) to a separate <code>curl</code> process, on a real PTY, with a Python reader at a set rate. Cold means an empty transform cache, warm means all transforms cached. Metro is 0.87.1 with only <code>Terminal.js</code> and <code>TerminalReporter.js</code> replaced at runtime by Babel-compiled versions from the PR's head and base, so the rest of Metro isn't <code>main</code>.</p>
+      <p>Arms ran in rotating balanced orders. Intervals are bootstrap 95% CIs on the difference in medians, treating runs as independent. The machine is shared: the 1-minute load was about 3–5 during warm runs and 8–14 during cold ones.</p>
+      <p>To see what a person sees, a recorder drains the PTY as fast as it can and timestamps each read. Each recording is then replayed through <code>@xterm/headless</code>, with a resize applied at its recorded time. The screen is sampled at 60 Hz. "On screen" means a progress line is in the viewport after the latest read, and "bottom line" means it's the last non-empty row. Copies are progress lines in the full scrollback at the end. 120 columns by 40 rows unless stated.</p>
+      <p>Synthetic scenarios run a 6 s build of 3,000 modules through the real <code>TerminalReporter</code> and <code>Terminal</code>, with progress events every few milliseconds and outside output on a timer. They cover log rates, exit paths, wrapping and HMR-sized rebuilds. Windows runs used a small script around the <code>Terminal</code> class, through <code>ssh -tt</code> to a Windows 11 machine.</p>
+      <p>Not measured: an emulator painting to a display, so visible flicker is inferred from the terminal state over time. Also real SSH or mobile links, Windows Terminal, a full Metro build on Windows, apps other than Mattermost, and <code>fs.writeSync</code> or <code>stdio: 'inherit'</code> on Windows. The 100 ms limit plus <code>log()</code> fix ran only in the log-rate scenarios and cold builds, so its warm build figure is inferred from the 33 ms version, which renders more often.</p>
+    </div>
+    <details class="prose"><summary>Screen sampling</summary><pre>const term = new Terminal({cols, rows, scrollback: 50000, allowProposedApi: true});
+const STATUS = /(?:BUNDLE|PREBUNDLE)\s.*\((\d+)\/(\d+)\)/;
+for (const {t, data} of recording) {
+  await new Promise(resolve =&gt; term.write(data, resolve));
+  const rows = viewportRows(term);
+  frames.push({t, onScreen: rows.some(r =&gt; STATUS.test(r)), bottom: STATUS.test(lastNonEmpty(rows))});
+}
+for (let t = start; t &lt; end; t += 16.67) {
+  // Take the latest frame at or before t, and count onScreen and bottom.
+}</pre></details>
+    <details class="prose"><summary>Scenario shape</summary><pre>const reporter = new TerminalReporter(new Terminal(process.stdout));
+reporter.update({type: 'bundle_build_started', buildID, isPrefetch: false, bundleDetails});
+// Every 5 ms: catch up to elapsed / duration * total, then the scenario's output.
+reporter.update({type: 'bundle_transform_progressed', buildID, transformedFileCount, totalFileCount});
+// Outside output:
+console.log(line);
+// Output through Terminal, at the rate under test:
+reporter.update({type: 'client_log', level: 'log', data: [line]});
+reporter.update({type: 'bundle_build_done', buildID});</pre></details>
+  </section>
+</main>
+</body>
+</html>

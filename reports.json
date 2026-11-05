@@ -13,6 +13,19 @@
     ]
   },
   {
+    "slug": "metro-2170-terminal-status",
+    "title": "Metro #2170: Terminal status and external writes",
+    "description": "What waiting for bursts of external writes changes in an interactive terminal, and what the status redraw path costs, on real PTY builds of Mattermost.",
+    "date": "2026-11-05",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-11-05",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "metro-esm-live-bindings",
     "title": "Live ES module bindings in Metro, paid for by CallRequire",
     "description": "What a live-bindings design for Metro's ES module transform costs and saves in Hermes bytecode size, startup time and memory, with CallRequire, a runtime-defined __esModule marker and lazy re-exports.",
