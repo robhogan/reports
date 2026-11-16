@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>DartNative&#x27;s launch benchmark, reproduced</title>
+<meta name="description" content="DartNative&#x27;s launch comparison with Flutter and React Native re-run on an iPhone 12 mini with the benchmark&#x27;s own tools, after a safety check of the code.">
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<link rel="stylesheet" href="../../../assets/report-b1b7feff6a.css">
+<style>
+.ms { display: grid; gap: 10px; border: 1px solid var(--rule); padding: 16px; }
+.ms-row { display: grid; grid-template-columns: 8.5rem 1fr; gap: 14px; align-items: center; }
+.ms-row .lbl { font: 600 0.85rem/1.2 var(--font-body); color: var(--fg); }
+.ms-row svg { display: block; width: 100%; height: 26px; overflow: visible; }
+.ms-axis { display: grid; grid-template-columns: 8.5rem 1fr; gap: 14px; }
+.ms-axis .ticks { position: relative; height: 16px; }
+.ms-axis .ticks span { position: absolute; top: 0; transform: translateX(-50%); font: 10px/16px var(--font-mono); color: var(--fg-3); white-space: nowrap; }
+.ms .grid { stroke: var(--rule); }
+.ms .seg-a { fill: var(--fg-3); opacity: 0.28; }
+.ms .seg-b { fill: var(--fg-3); opacity: 0.6; }
+.ms .seg-c { fill: var(--fg-3); }
+.ms .val { fill: var(--fg-2); font: 10px var(--font-mono); }
+.ms .hit { fill: transparent; cursor: default; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 0.85rem; color: var(--fg-2); }
+.legend i { display: inline-block; width: 12px; height: 12px; border-radius: 2px; vertical-align: -1px; margin-right: 6px; }
+.legend .a { background: var(--fg-3); opacity: 0.28; }
+.legend .b { background: var(--fg-3); opacity: 0.6; }
+.legend .c { background: var(--fg-3); }
+.tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font: 0.78rem/1.45 var(--font-mono); padding: 8px 10px; border-radius: 4px; max-width: 320px; z-index: 10; }
+ol.steps { padding-left: 1.4em; display: grid; gap: 6px; }
+@media (max-width: 640px) {
+  .ms-row, .ms-axis { grid-template-columns: 1fr; }
+  .ms-axis > :first-child { display: none; }
+}
+</style>
+</head>
+<body>
+<div class="snapshot-banner"><div>Revision 1 of this report, published 2026-11-16. <a href="../../">Read the latest version</a> · <a href="../../#revisions">All revisions</a></div></div>
+<main class="page">
+  <header>
+    <div class="eyebrow">DartNative/dartnative · benchmark</div>
+    <h1>DartNative's launch benchmark, reproduced on an iPhone 12 mini</h1>
+    <p class="lede">Whether DartNative's published launch comparison with Flutter and React Native holds up, re-run on an iPhone 12 mini with the benchmark's own tools after checking the code for anything malicious.</p>
+    <div class="meta">
+      <span>DartNative/dartnative <span class="mono">eca55b0</span></span><span>whiskerrs/benchmarks <span class="mono">635ec66</span></span><span>DartNative 1.7.0 · Flutter 3.47.9 · React Native 0.88.1</span><span>iPhone 12 mini, iOS 26.6.2</span><span>Xcode 27.0</span><span>Measured 2026-11-16</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Summary</h2>
+    <div class="verdict">
+      <div><span class="k">First frame</span><span class="v">Tie with React Native</span><span class="d">React Native 89.4 ms, DartNative 93.1 ms: −3.7 ms, 95% CI −5.0 to +0.9. Flutter 156.3 ms. Medians of 20 launches each.</span></div>
+      <div><span class="k">Home content on screen</span><span class="v">Tie with React Native</span><span class="d">With DartNative's own correction, from iOS's record of each frame commit: React Native 171.3 ms, DartNative 174.7 ms (−3.4 ms, 95% CI −9.8 to +10.1). Flutter 240.8 ms.</span></div>
+      <div><span class="k">First real content</span><span class="v">React Native −31.5 ms</span><span class="d">React Native commits its first React content at 119.7 ms, DartNative its first Dart UI at 151.2 ms (95% CI −40.0 to −25.6). DartNative's first frame is a launch placeholder.</span></div>
+      <div><span class="k">Code safety</span><span class="v pos">Nothing malicious found</span><span class="d">The benchmark's apps and tools, DartNative's app and its <code>dn</code> tool source were checked. The engine binaries and the licence runtime are closed and weren't audited.</span></div>
+    </div>
+    <div class="prose stack">
+      <p>DartNative's chart, measured on an iPhone 16 Pro, puts DartNative first on both measures, ahead of React Native and Flutter. On an iPhone 12 mini, with the benchmark's own tools, DartNative ties React Native on both: to first frame, and to Home content on screen once DartNative's own correction for when each app writes its marker is applied. By the benchmark's uncorrected marker React Native is 20.5 ms ahead, because it writes the line about 15 ms before its content is committed. DartNative's lead over Flutter does reproduce, at 60–66 ms. The order held in both rotations, and each app's two rounds agree within 2 ms for first frame and 6 ms for Home content.</p>
+      <p>The benchmark's "first frame" is UIKit's first frame, and for all three apps that frame comes before any framework content. React Native's is an empty root view, DartNative's is its own launch placeholder, and Flutter's is its launch screen. Timed from iOS's own record of what each app sends to the screen, React Native commits its first real content 31.5 ms before DartNative, and DartNative 69.5 ms before Flutter.</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>Launch times on the iPhone 12 mini</h2>
+    <div class="prose stack">
+      <p>Each app ran 10 measured launches in each of two rounds, in rotated order, using the benchmark's <code>measure.py</code> and Instruments' App Launch template. React Native and DartNative are within 4 ms of each other to first frame and to Home content on screen. React Native's <code>home_ready</code> line comes 20.5 ms sooner, but it writes the line before its content is committed. Flutter is 55–70 ms behind both on every measure.</p>
+    </div>
+    <div class="legend" aria-hidden="true"><span><i class="a"></i>Process start → first frame (UIKit)</span><span><i class="b"></i>→ first content committed</span><span><i class="c"></i>→ Home content committed</span></div>
+    <div class="ms" id="ms" role="img" aria-label="Launch milestones in ms from process start, median of 20 launches: React Native: first frame 89.4, first content 119.7, Home content 171.3; DartNative: first frame 93.1, first content 151.2, Home content 174.7; Flutter: first frame 156.3, first content 220.7, Home content 240.8"></div>
+    <details class="prose"><summary>Chart data</summary><div class="scroll"><table><thead><tr><th>App</th><th>First frame</th><th>First content committed</th><th>Home content committed</th></tr></thead><tbody><tr><td class="sans">React Native</td><td>89.4</td><td>119.7</td><td>171.3</td></tr><tr><td class="sans">DartNative</td><td>93.1</td><td>151.2</td><td>174.7</td></tr><tr><td class="sans">Flutter</td><td>156.3</td><td>220.7</td><td>240.8</td></tr></tbody></table></div></details>
+    <div class="scroll"><table>
+      <thead><tr><th>App</th><th>First frame</th><th>Home content (<code>home_ready</code>)</th><th>Round 1 / round 2 (first frame · Home)</th><th>App size</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">React Native</td><td>89.4<br><span class="mono" style="color:var(--fg-3)">88.5 … 99.4</span></td><td>155.1<br><span class="mono" style="color:var(--fg-3)">150.7 … 180.7</span></td><td>90.4 · 160.0 / 89.2 · 154.4</td><td>23.8 MB</td></tr>
+        <tr><td class="sans">DartNative</td><td>93.1<br><span class="mono" style="color:var(--fg-3)">90.5 … 95.0</span></td><td>175.6<br><span class="mono" style="color:var(--fg-3)">170.5 … 183.9</span></td><td>91.4 · 180.8 / 93.4 · 174.8</td><td>14.0 MB</td></tr>
+        <tr><td class="sans">Flutter</td><td>156.3<br><span class="mono" style="color:var(--fg-3)">154.8 … 159.4</span></td><td>230.9<br><span class="mono" style="color:var(--fg-3)">228.1 … 236.5</span></td><td>157.1 · 232.8 / 155.9 · 229.6</td><td>16.5 MB</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Milliseconds from process start; medians of 20 launches per app, with the interquartile range below. Round 1 ran DartNative, Flutter, React Native; round 2 ran Flutter, React Native, DartNative. App size is the bytes of the built <code>.app</code>.</p>
+    <div class="scroll"><table>
+      <thead><tr><th>Difference from DartNative</th><th>First frame</th><th>Home content (<code>home_ready</code>)</th><th>First content committed</th><th>Home content committed</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">React Native</td><td>−3.7<br><span class="mono" style="color:var(--fg-3)">−5.0 … +0.9</span></td><td>−20.5<br><span class="mono" style="color:var(--fg-3)">−25.7 … −7.2</span></td><td>−31.5<br><span class="mono" style="color:var(--fg-3)">−40.0 … −25.6</span></td><td>−3.4<br><span class="mono" style="color:var(--fg-3)">−9.8 … +10.1</span></td></tr>
+        <tr><td class="sans">Flutter</td><td>+63.2<br><span class="mono" style="color:var(--fg-3)">+61.5 … +66.7</span></td><td>+55.3<br><span class="mono" style="color:var(--fg-3)">+50.1 … +62.3</span></td><td>+69.5<br><span class="mono" style="color:var(--fg-3)">+51.2 … +76.3</span></td><td>+66.1<br><span class="mono" style="color:var(--fg-3)">+60.8 … +71.4</span></td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Difference in medians (ms), with the 95% bootstrap confidence interval below (20,000 resamples, 20 launches per app; 17 for Flutter's first content, where 3 traces have no sample of its raster thread's first frame). The committed columns are defined in the next section.</p>
+  </section>
+
+  <section>
+    <h2>What "first frame" and "Home content" contain</h2>
+    <div class="prose stack">
+      <p>The benchmark takes first frame from Instruments' App Life Cycle, the end of UIKit's Initial Frame Rendering, and Home content from the moment each app writes <code>SHOPBENCH home_ready</code>. Neither marks the same thing in every app. The same recordings hold iOS's record of each Core Animation transaction an app commits, so the moment real content goes to the screen can be read directly.</p>
+      <ul class="tight">
+        <li><strong>React Native</strong> commits its first frame with an empty root view, then renders React's first content in a later commit. It writes <code>home_ready</code> from a React effect, before Home's content is mounted.</li>
+        <li><strong>DartNative</strong> shows its own launch placeholder (<code>DartNativeRuntime.showLaunch()</code>) in <code>sceneWillConnectTo</code> and starts the Dart engine after that frame. It writes <code>home_ready</code> just after Home's content is committed.</li>
+        <li><strong>Flutter</strong>'s first frame is its launch screen; its content is drawn with Metal on the raster thread. It writes <code>home_ready</code> from a post-frame callback, before the raster thread presents the frame.</li>
+      </ul>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>App</th><th>First frame</th><th>First content</th><th>home_ready</th><th>Home content</th><th>Offset</th><th>DartNative's offset</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">React Native</td><td>89.4</td><td>119.7</td><td>155.1</td><td>171.3</td><td>+15.5</td><td>+12.2</td></tr>
+        <tr><td class="sans">DartNative</td><td>93.1</td><td>151.2</td><td>175.6</td><td>174.7</td><td>−0.5</td><td>−0.3</td></tr>
+        <tr><td class="sans">Flutter</td><td>156.3</td><td>220.7*</td><td>230.9</td><td>240.8</td><td>+9.8</td><td>+8.7</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">Milliseconds from process start, medians of 20 launches. First frame is UIKit's, from App Life Cycle. First content is the first commit of at least 1 ms after the first frame. *For Flutter, which draws with Metal, it is the first commit after its raster thread first runs Metal work, found in 17 of 20 launches. Home content is the first commit that ends at or after <code>home_ready</code> − 2 ms, and Offset is Home content minus <code>home_ready</code>. DartNative's offset is its published figure from its iPhone 16 Pro recordings; the offsets reproduce closely.</p>
+  </section>
+
+  <section>
+    <h2>Against the published numbers</h2>
+    <div class="prose stack">
+      <p>Absolute times differ by device and iOS version, so compare orderings rather than values. DartNative's iPhone 16 Pro numbers put it first on both measures. On the iPhone 12 mini, DartNative and React Native tie on first frame and on Home content committed; React Native is first by the uncorrected <code>home_ready</code> marker. The benchmark's own iPhone 12 results predate DartNative's app, but agree that React Native and Flutter are close to first frame there.</p>
+    </div>
+    <div class="scroll"><table>
+      <thead><tr><th>Source</th><th>Device</th><th>DartNative</th><th>React Native</th><th>Flutter</th></tr></thead>
+      <tbody>
+        <tr><td class="sans">DartNative's chart</td><td class="sans">iPhone 16 Pro, iOS 27.2.1</td><td>67.1 · 136.4</td><td>77.3 · 162.4<br><span class="mono" style="color:var(--fg-3)">corrected 173.4</span></td><td>100.9 · 171.5<br><span class="mono" style="color:var(--fg-3)">corrected 180.2</span></td></tr>
+        <tr><td class="sans">whiskerrs/benchmarks results</td><td class="sans">iPhone 12, iOS 27.2</td><td>—</td><td>132 · 211</td><td>142 · 211</td></tr>
+        <tr><td class="sans">This run</td><td class="sans">iPhone 12 mini, iOS 26.6.2</td><td>93.1 · 175.6</td><td>89.4 · 155.1</td><td>156.3 · 230.9</td></tr>
+      </tbody>
+    </table></div>
+    <p class="note prose">First frame · Home content (<code>home_ready</code>), median ms. DartNative's chart is one round of 10 launches per app; its "corrected" figures replace the benchmark's Home marker with the commit time. The whiskerrs/benchmarks figures are from its <code>results/2026-11-11</code> (two rounds of 10).</p>
+  </section>
+
+  <section>
+    <h2>Is the code safe to run?</h2>
+    <div class="prose stack">
+      <p>Nothing malicious was found in the code that was checked. The parts that couldn't be checked are DartNative's prebuilt engine and Dart SDK binaries and its compiled licence runtime.</p>
+      <ul class="tight">
+        <li><strong>Comparison apps.</strong> The Flutter and React Native apps in <code>benchmarks/frameworks_comparison</code> are byte-identical to whiskerrs/benchmarks' own at <span class="mono">635ec66</span>, except that DartNative's copies omit the lockfiles (<code>pubspec.lock</code>, <code>Podfile.lock</code>). This run builds the benchmark's copies, lockfiles included. Build hooks are stock template script phases; npm packages resolve from the public registry, and none but <code>fsevents</code> has an install script.</li>
+        <li><strong>DartNative's app.</strong> Its Dart source sends a GraphQL request to the configured endpoint, reads <code>SHOP_API_URL</code> with <code>getenv</code> over FFI, and doesn't cache or prefetch anything that could flatter its launch time.</li>
+        <li><strong>The benchmark's tools.</strong> <code>measure.py</code>, <code>bench.py</code>, <code>extract.py</code>, the replay server and the XCUITest runner touch only the benchmark's own apps, Instruments and their output directory.</li>
+        <li><strong>The <code>dn</code> SDK.</strong> It is a fork of Flutter's tool, shipped as Dart source and compiled locally; its closest upstream match is Flutter 3.41.0, with 533 of its 805 tool files identical. The 37 tool source files it changes without any DartNative marker add no network, process or credential access beyond one <code>adb devices -l</code> call. Its own network hosts are <code>cdn.dartnative.com</code>, <code>dartpub.dev</code> and <code>api.dartpub.dev</code>, and its analytics and crash reporting are switched off in source. The free trial sends <code>api.dartpub.dev</code> a SHA-256 of the Mac's hardware UUID with a fixed salt, a stable pseudonymous machine ID, and the returned token is compiled into builds.</li>
+        <li><strong>Not audited.</strong> The Dart SDK and engine binaries downloaded from <code>cdn.dartnative.com</code> (the Dart SDK binary is ad hoc signed), and the licence and CodePush runtime, which ships as compiled kernel behind source stubs. DartNative's licence forbids reverse engineering.</li>
+        <li><strong>Installer.</strong> <code>install.sh</code> replaces <code>~/zero</code> if it exists and appends a <code>PATH</code> line to the shell profile. This run unpacked the SDK tarball into its own directory instead, after checking it against the published SHA-256.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <h2>Method</h2>
+    <div class="prose stack">
+      <h3>Reproduction steps</h3>
+      <ol class="steps">
+        <li>Clone DartNative/dartnative at <span class="mono">eca55b0</span> and whiskerrs/benchmarks at <span class="mono">635ec66</span>.</li>
+        <li>Install the DartNative SDK (1.7.0) from <code>cdn.dartnative.com/dn_infra/sdk/latest/dn-sdk.tar.gz</code>, Flutter 3.47.9, and CocoaPods; React Native 0.88.1 comes from the app's <code>package-lock.json</code> (prebuilt core, Hermes).</li>
+        <li>Build each app's release build for the device with its <code>BUILD.md</code>: <code>dn build ios --release</code> for DartNative (its free trial covers this app's bundle ID), and <code>xcodebuild</code> for Flutter and React Native. Every app is built unsigned and signed afterwards with the same development identity and profile, keeping its bundle ID.</li>
+        <li>Fetch the replay server's images with <code>tools/replay/replay.py crawl</code>, then run each app once against <code>record</code> mode so the replay set is complete.</li>
+        <li>Build the XCUITest runner from <code>tools/runner</code>.</li>
+        <li>Run <code>tools/measure.py --rounds 2 --launch-runs 10 --journey-runs 0 --instruments ""</code> for the three apps, with DartNative added to its <code>APPS</code> table as DartNative's README describes.</li>
+        <li>Summarise with <code>tools/extract.py --summary</code>; the commit-time analysis reads the same traces.</li>
+      </ol>
+      <h3>Test conditions</h3>
+      <ul class="tight">
+        <li><strong>Phone.</strong> iPhone 12 mini (A14), iOS 26.6.2, connected over USB, charging throughout: battery 86% at the start, 100% from the second round, at 22–28 °C. Battery health 77%.</li>
+        <li><strong>Network.</strong> The phone reaches the replay server over Wi-Fi on the same LAN. The server ran on the Mac behind a small TCP forwarder in Node, because macOS Local Network Privacy blocked Python from the LAN; the forwarder adds about 1 ms per request. All runs had zero replay misses.</li>
+        <li><strong>Mac and tools.</strong> Mac mini (M4 Pro), Xcode 27.0. Both published runs used Xcode 27.2.</li>
+        <li><strong>Protocol.</strong> The benchmark's: each app is installed alone, its Local Network prompt answered by the runner, then it rests 180 s; one discarded launch, then 10 measured launches of 10 s each under the App Launch template with <code>os_log</code>, 5 s apart.</li>
+      </ul>
+      <h3>Changes to the benchmark's tools</h3>
+      <ul class="tight">
+        <li><code>measure.py</code>: DartNative added to <code>APPS</code>, and the replay server's port made configurable so the forwarder can sit in front of it.</li>
+        <li><code>bench.py</code>: the per-recording timeout raised from 130 s to 180 s, because Instruments takes 30–50 s to finalise each recording on this device.</li>
+        <li>The runner's prepare step waits for <code>featured-collection</code> instead of <code>best-seller-0</code>. On the iPhone 12 mini's 812-pt screen the best-seller grid starts below the fold, and DartNative only creates collection-view cells when they become visible. The step answers the Local Network prompt and isn't timed.</li>
+      </ul>
+      <h3>Things that change the result</h3>
+      <ul class="tight">
+        <li><strong>Battery state.</strong> The same apps on the same phone, measured after its battery had drained, launched 32–56% slower, with the same order. Every result here was taken while charging.</li>
+        <li><strong>Overlapping recordings.</strong> After each recording, Instruments requests a signature for every library the launched process loaded from the device, which keeps the phone busy for 30–50 s. A launch started during that window measured 7 ms slower to first frame (median of 8). Launches here never overlap; one launch cycle takes about 47 s.</li>
+        <li><strong>The first commit isn't always the first frame.</strong> An app's first Core Animation commit came before UIKit's initial frame in 26 of 30 traces checked, so first frame comes only from the App Life Cycle table, which only the App Launch template records. Process start matches dyld's launch event (kdebug class <code>0x1f</code>, subclass <code>0x7</code>, code <code>0xd</code>) to within 0.001 ms in the 9 traces checked.</li>
+      </ul>
+    </div>
+    <details class="prose"><summary>Commit times from a trace</summary><pre>xcrun xctrace export --input launch-1.trace \
+  --xpath '/trace-toc/run[@number="1"]/data/table[@schema="kdebug"]'
+
+# Core Animation transaction commits are kdebug class 0x31, subclass 0xca, code 0x1:
+# START and END events per thread, with the commit seed in arg2. The end of the commit
+# that UIKit's Initial Frame Rendering covers equals the benchmark's first frame.</pre></details>
+  </section>
+</main>
+<div class="tip" id="tip" hidden></div>
+
+<script>
+const APPS = [{"name": "React Native", "ff": 89.4, "fc": 119.7, "home": 171.3}, {"name": "DartNative", "ff": 93.1, "fc": 151.2, "home": 174.7}, {"name": "Flutter", "ff": 156.3, "fc": 220.7, "home": 240.8}];
+const MAX = 300, TICKS = [0, 50, 100, 150, 200, 250, 300];
+const NS = 'http://www.w3.org/2000/svg';
+const W = 100;
+const x = v => Math.min(v, MAX) / MAX * W;
+const el = (tag, attrs, parent) => { const n = document.createElementNS(NS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); parent.appendChild(n); return n; };
+const root = document.getElementById('ms');
+const tip = document.getElementById('tip');
+const axis = document.createElement('div');
+axis.className = 'ms-axis';
+axis.innerHTML = '<span></span><div class="ticks"></div>';
+for (const t of TICKS) {
+  const s = document.createElement('span');
+  s.textContent = t === MAX ? t + ' ms' : String(t);
+  s.style.left = x(t) + '%';
+  if (t === 0) s.style.transform = 'none';
+  if (t === MAX) s.style.transform = 'translateX(-100%)';
+  axis.lastChild.appendChild(s);
+}
+for (const a of APPS) {
+  const row = document.createElement('div');
+  row.className = 'ms-row';
+  row.innerHTML = `<div class="lbl">${a.name}</div>`;
+  const svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} 26`);
+  svg.setAttribute('preserveAspectRatio', 'none');
+  for (const t of TICKS) el('line', {x1: x(t), x2: x(t), y1: 0, y2: 26, class: 'grid', 'vector-effect': 'non-scaling-stroke'}, svg);
+  const gap = 0.25;
+  const segs = [[0, a.ff, 'seg-a', 'Process start → first frame'], [a.ff, a.fc, 'seg-b', 'First frame → first content'], [a.fc, a.home, 'seg-c', 'First content → Home content']];
+  for (const [s, e, cls] of segs) el('rect', {x: x(s) + (s ? gap : 0), y: 7, width: Math.max(x(e) - x(s) - gap, 0.2), height: 12, rx: 0.6, class: cls}, svg);
+  const hit = el('rect', {x: 0, y: 0, width: W, height: 26, class: 'hit'}, svg);
+  hit.addEventListener('mousemove', e => {
+    tip.hidden = false;
+    tip.innerHTML = `<b>${a.name}</b><br>first frame ${a.ff.toFixed(1)} ms<br>first content ${a.fc.toFixed(1)} ms<br>Home content ${a.home.toFixed(1)} ms`;
+    tip.style.left = Math.min(e.clientX + 14, window.innerWidth - tip.offsetWidth - 8) + 'px';
+    tip.style.top = (e.clientY + 14) + 'px';
+  });
+  hit.addEventListener('mouseleave', () => { tip.hidden = true; });
+  row.appendChild(svg);
+  root.appendChild(row);
+}
+root.appendChild(axis);
+</script>
+</body>
+</html>

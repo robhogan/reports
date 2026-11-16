@@ -1,5 +1,18 @@
 [
   {
+    "slug": "dartnative-frameworks-comparison",
+    "title": "DartNative's launch benchmark, reproduced",
+    "description": "DartNative's launch comparison with Flutter and React Native re-run on an iPhone 12 mini with the benchmark's own tools, after a safety check of the code.",
+    "date": "2026-11-16",
+    "revisions": [
+      {
+        "n": 1,
+        "date": "2026-11-16",
+        "note": "First published."
+      }
+    ]
+  },
+  {
     "slug": "metro-1676-safety-review",
     "title": "Dropping graceful-fs from Metro",
     "description": "Safety review of react/metro#1676: what Metro loses without graceful-fs, checked against its source and stress-tested under a 256-fd hard limit.",
